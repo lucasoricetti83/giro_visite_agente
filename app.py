@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
@@ -13,25 +14,28 @@ def haversine(lon1, lat1, lon2, lat2):
     return c * 6371
 
 # --- CONFIGURAZIONE APP ---
-st.set_page_config(page_title="Giro Visite Selettivo", page_icon="🚗")
-st.title("🚗 Pianificatore con Selezione Clienti")
+st.set_page_config(page_title="Giro Visite Live", page_icon="📊")
+st.title("📊 Gestione Visite Real-Time")
 
-uploaded_file = st.file_uploader("Carica il file clienti.csv", type=['csv'])
+# --- CONNESSIONE GOOGLE SHEETS ---
+# Inserisci qui il link del tuo foglio Google tra le virgolette
+URL_FOGLIO = "INSERISCI_QUI_IL_TUO_LINK_DI_GOOGLE_SHEETS"
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file, sep=';', decimal=',')
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+try:
+    # Leggiamo i dati dal foglio
+    df = conn.read(spreadsheet=URL_FOGLIO)
     
-    # Pulizia Date
+    # Conversione date
     df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
     oggi = datetime.now()
     df['Giorni Passati'] = (oggi - df['Ultima Visita']).dt.days
 
-    # --- NUOVA LOGICA DI FILTRO ---
-    # Filtriamo chi è scaduto E ha "SI" nella colonna 'visitare'
-    # .str.upper() serve per evitare errori tra "si", "Si", "SI"
+    # Filtro: Scaduti + Colonna 'visitare' = SI
     clienti_filtrati = df[
         (df['Giorni Passati'] >= df['Frequenza (giorni)']) & 
-        (df['visitare'].get_values().astype(str).str.upper() == 'SI')
+        (df['visitare'].astype(str).str.upper() == 'SI')
     ].copy()
 
     st.sidebar.header("Parametri Giro")
@@ -41,13 +45,13 @@ if uploaded_file:
     casa_lat = 43.1932389
     casa_lon = 13.5792209
 
-    st.write(f"### Clienti pronti per il giro: {len(clienti_filtrati)}")
-    st.dataframe(clienti_filtrati[['Nome Cliente', 'Indirizzo', 'Giorni Passati']])
-
-    if st.button("🚀 Calcola Itinerario per i selezionati"):
+    st.write(f"### 📍 Clienti da visitare oggi: {len(clienti_filtrati)}")
+    
+    if st.button("🚀 Calcola Itinerario Ottimale"):
         if clienti_filtrati.empty:
-            st.warning("Nessun cliente da visitare selezionato (controlla la colonna 'visitare' nel file).")
+            st.warning("Nessun cliente selezionato con 'SI' nel foglio.")
         else:
+            # --- LOGICA CALCOLO ---
             tempo_minuti = 0
             max_minuti = ore_disp * 60
             pos_attuale = {'lat': casa_lat, 'lon': casa_lon}
@@ -66,25 +70,21 @@ if uploaded_file:
                     c = clienti_filtrati.loc[prox_idx]
                     t_viaggio = (dist_migliore / velocita) * 60
                     t_totale = t_viaggio + c['Durata']
-                    
                     if (tempo_minuti + t_totale) <= max_minuti:
                         tempo_minuti += t_totale
-                        giro_visite.append({
-                            'Nome': c['Nome Cliente'],
-                            'Indirizzo': c['Indirizzo'],
-                            'Viaggio': round(t_viaggio),
-                            'Visita': c['Durata']
-                        })
+                        giro_visite.append({'Nome': c['Nome Cliente'], 'Indirizzo': c['Indirizzo'], 'Viaggio': round(t_viaggio), 'Visita': c['Durata']})
                         pos_attuale = {'lat': c['Latitudine'], 'lon': c['Longitudine']}
                         clienti_filtrati = clienti_filtrati.drop(prox_idx)
                     else: break
                 else: break
 
-            st.success(f"Giro Calcolato: {len(giro_visite)} tappe.")
+            st.success(f"Giro pronto!")
             for i, tappa in enumerate(giro_visite):
                 with st.expander(f"{i+1}. {tappa['Nome']}"):
-                    st.write(f"📍 {tappa['Indirizzo']}")
+                    st.write(f"🏠 {tappa['Indirizzo']}")
                     st.write(f"🚗 Guida: {tappa['Viaggio']} min | ⏱️ Visita: {tappa['Visita']} min")
+                    st.text_area("Report visita:", key=f"rep_{i}")
 
-else:
-    st.info("Carica il file clienti per iniziare.")
+except Exception as e:
+    st.error(f"Errore di connessione al foglio: {e}")
+    st.info("Assicurati che il link del foglio sia corretto e che l'accesso sia impostato su 'Editor'.")
