@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
 # --- FUNZIONI UTILI ---
@@ -13,79 +13,78 @@ def haversine(lon1, lat1, lon2, lat2):
     return c * 6371
 
 # --- CONFIGURAZIONE APP ---
-st.set_page_config(page_title="Pianificatore 4 Settimane", layout="wide")
-st.title("🗓️ Programmazione Visite Mensile (4 Settimane)")
+st.set_page_config(page_title="Giro Visite Selettivo", page_icon="🚗")
+st.title("🚗 Pianificatore con Selezione Clienti")
 
-# --- SIDEBAR IMPOSTAZIONI ---
-st.sidebar.header("Parametri di Pianificazione")
-ore_lavoro_giorno = st.sidebar.slider("Ore lavorative al giorno", 1, 12, 8)
-velocita_media = st.sidebar.number_input("Velocità media (km/h)", value=40)
-casa_lat = st.sidebar.number_input("Latitudine Partenza", value=43.1932389, format="%.7f")
-casa_lon = st.sidebar.number_input("Longitudine Partenza", value=13.5792209, format="%.7f")
-
-# --- CARICAMENTO FILE ---
 uploaded_file = st.file_uploader("Carica il file clienti.csv", type=['csv'])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file, sep=';', decimal=',')
-    df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
     
-    if st.button("🚀 GENERA PIANO 4 SETTIMANE"):
-        # Creiamo una copia per non sporcare il database originale durante la simulazione
-        df_simulazione = df.copy()
-        data_simulata = datetime.now()
-        
-        # Creiamo 4 Tab (schede) nell'app per le 4 settimane
-        tab1, tab2, tab3, tab4 = st.tabs(["Settimana 1", "Settimana 2", "Settimana 3", "Settimana 4"])
-        tabs = [tab1, tab2, tab3, tab4]
+    # Pulizia Date
+    df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
+    oggi = datetime.now()
+    df['Giorni Passati'] = (oggi - df['Ultima Visita']).dt.days
 
-        for sett in range(4):
-            with tabs[sett]:
-                st.header(f"📅 Settimana {sett + 1}")
+    # --- NUOVA LOGICA DI FILTRO ---
+    # Filtriamo chi è scaduto E ha "SI" nella colonna 'visitare'
+    # .str.upper() serve per evitare errori tra "si", "Si", "SI"
+    clienti_filtrati = df[
+        (df['Giorni Passati'] >= df['Frequenza (giorni)']) & 
+        (df['visitare'].get_values().astype(str).str.upper() == 'SI')
+    ].copy()
+
+    st.sidebar.header("Parametri Giro")
+    ore_disp = st.sidebar.slider("Ore disponibili", 1, 12, 8)
+    velocita = st.sidebar.number_input("Velocità media (km/h)", value=40)
+    
+    casa_lat = 43.1932389
+    casa_lon = 13.5792209
+
+    st.write(f"### Clienti pronti per il giro: {len(clienti_filtrati)}")
+    st.dataframe(clienti_filtrati[['Nome Cliente', 'Indirizzo', 'Giorni Passati']])
+
+    if st.button("🚀 Calcola Itinerario per i selezionati"):
+        if clienti_filtrati.empty:
+            st.warning("Nessun cliente da visitare selezionato (controlla la colonna 'visitare' nel file).")
+        else:
+            tempo_minuti = 0
+            max_minuti = ore_disp * 60
+            pos_attuale = {'lat': casa_lat, 'lon': casa_lon}
+            giro_visite = []
+
+            while tempo_minuti < max_minuti and not clienti_filtrati.empty:
+                dist_migliore = float('inf')
+                prox_idx = -1
+                for idx, row in clienti_filtrati.iterrows():
+                    d = haversine(pos_attuale['lon'], pos_attuale['lat'], row['Longitudine'], row['Latitudine'])
+                    if d < dist_migliore:
+                        dist_migliore = d
+                        prox_idx = idx
                 
-                # Simuliamo 5 giorni lavorativi (Lun-Ven)
-                for giorno in ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]:
-                    # Calcola chi è "scaduto" in questa data simulata
-                    df_simulazione['Giorni Passati'] = (data_simulata - df_simulazione['Ultima Visita']).dt.days
-                    clienti_da_visitare = df_simulazione[df_simulazione['Giorni Passati'] >= df_simulazione['Frequenza (giorni)']].copy()
+                if prox_idx != -1:
+                    c = clienti_filtrati.loc[prox_idx]
+                    t_viaggio = (dist_migliore / velocita) * 60
+                    t_totale = t_viaggio + c['Durata']
                     
-                    tempo_minuti = 0
-                    max_minuti = ore_lavoro_giorno * 60
-                    pos_attuale = {'lat': casa_lat, 'lon': casa_lon}
-                    giro_del_giorno = []
+                    if (tempo_minuti + t_totale) <= max_minuti:
+                        tempo_minuti += t_totale
+                        giro_visite.append({
+                            'Nome': c['Nome Cliente'],
+                            'Indirizzo': c['Indirizzo'],
+                            'Viaggio': round(t_viaggio),
+                            'Visita': c['Durata']
+                        })
+                        pos_attuale = {'lat': c['Latitudine'], 'lon': c['Longitudine']}
+                        clienti_filtrati = clienti_filtrati.drop(prox_idx)
+                    else: break
+                else: break
 
-                    while tempo_minuti < max_minuti and not clienti_da_visitare.empty:
-                        dist_migliore = float('inf')
-                        prox_idx = -1
-                        for idx, row in clienti_da_visitare.iterrows():
-                            d = haversine(pos_attuale['lon'], pos_attuale['lat'], row['Longitudine'], row['Latitudine'])
-                            if d < dist_migliore:
-                                dist_migliore = d
-                                prox_idx = idx
-                        
-                        if prox_idx != -1:
-                            c = clienti_da_visitare.loc[prox_idx]
-                            t_viaggio = (dist_migliore / velocita_media) * 60
-                            t_totale = t_viaggio + c['Durata']
-                            
-                            if (tempo_minuti + t_totale) <= max_minuti:
-                                tempo_minuti += t_totale
-                                giro_del_giorno.append(f"{c['Nome Cliente']} ({c['Indirizzo']})")
-                                # Aggiorniamo l'ultima visita simulata per questo cliente
-                                df_simulazione.at[prox_idx, 'Ultima Visita'] = data_simulata
-                                pos_attuale = {'lat': c['Latitudine'], 'lon': c['Longitudine']}
-                                clienti_da_visitare = clienti_da_visitare.drop(prox_idx)
-                            else: break
-                        else: break
-                    
-                    # Mostra il giro del giorno
-                    with st.expander(f"📍 {giorno}"):
-                        if giro_del_giorno:
-                            for t in giro_del_giorno:
-                                st.write(f"- {t}")
-                            st.caption(f"Tempo stimato: {int(tempo_minuti//60)}h {int(tempo_minuti%60)}min")
-                        else:
-                            st.write("Nessuna visita programmata.")
-                    
-                    # Avanziamo di un giorno nella simulazione
-                    data_simulata += timedelta(days=1)
+            st.success(f"Giro Calcolato: {len(giro_visite)} tappe.")
+            for i, tappa in enumerate(giro_visite):
+                with st.expander(f"{i+1}. {tappa['Nome']}"):
+                    st.write(f"📍 {tappa['Indirizzo']}")
+                    st.write(f"🚗 Guida: {tappa['Viaggio']} min | ⏱️ Visita: {tappa['Visita']} min")
+
+else:
+    st.info("Carica il file clienti per iniziare.")
