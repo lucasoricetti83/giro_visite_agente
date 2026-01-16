@@ -1,4 +1,3 @@
-import io  # Necessario per gestire i file in memoria
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time
@@ -231,53 +230,32 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 }
                 st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([r])], ignore_index=True); st.rerun()
 
-# --- ⚙️ PARAMETRI (Aggiornato con Export) ---
+# --- ⚙️ PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
-    
-    # 1, 2, 3, 4... (Mantieni il codice esistente per Partenza, Orari e Durata)
-    # ... (codice precedente) ...
-
+    st.subheader("1. Punto di Partenza")
+    nc = st.text_input("Città/Paese di Partenza:", st.session_state.start_city)
+    if nc != st.session_state.start_city:
+        co = get_coords(nc)
+        if co:
+            st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
+            st.success("📍 Partenza aggiornata!"); st.rerun()
+    st.subheader("2. Ora Inizio / 3. Ora Fine")
+    ca, cb = st.columns(2)
+    st.session_state.h_inizio = ca.time_input("Inizio lavoro", st.session_state.h_inizio)
+    st.session_state.h_fine = cb.time_input("Fine lavoro", st.session_state.h_fine)
+    st.subheader("4. Durata Visite")
+    st.session_state.durata_v = st.slider("Minuti per tappa", 15, 120, st.session_state.durata_v)
+    st.subheader("5. Database")
+    if st.button("🔄 Reset e Ricarica Database", use_container_width=True):
+        st.cache_data.clear()
+        if 'df_master' in st.session_state: del st.session_state.df_master
+        st.rerun()
     st.divider()
-
-    # --- NUOVA SEZIONE: ESPORTAZIONE DATI ---
-    st.subheader("📊 6. Esportazione Dati")
-    col_exp1, col_exp2 = st.columns(2)
-
-    # Funzione helper per convertire DataFrame in Excel (in memoria)
-    def to_excel(df):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Dati')
-        return output.getvalue()
-
-    with col_exp1:
-        st.write("📂 **Anagrafica Clienti**")
-        if not st.session_state.df_master.empty:
-            df_exc = to_excel(st.session_state.df_master)
-            st.download_button(
-                label="📥 Scarica Clienti (Excel)",
-                data=df_exc,
-                file_name=f"anagrafica_clienti_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        else:
-            st.info("Nessun dato cliente da esportare.")
-
-    with col_exp2:
-        st.write("📝 **Report Visite**")
-        if not st.session_state.df_reports.empty:
-            df_rep_exc = to_excel(st.session_state.df_reports)
-            st.download_button(
-                label="📥 Scarica Report Visite (Excel)",
-                data=df_rep_exc,
-                file_name=f"report_visite_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        else:
-            st.info("Nessun report salvato finora.")
-
-    st.divider()
-    # (Mantieni qui sotto il codice dello Scambio Giorno e del Reset Database)
+    st.subheader("🔄 Scambia Giorno")
+    c1, c2 = st.columns(2)
+    d1 = c1.date_input("Da:", datetime.now())
+    d2 = c2.date_input("A:", datetime.now() + timedelta(days=1))
+    if st.button("🔄 Esegui Scambio Giri"):
+        st.session_state.spostamenti[d1], st.session_state.spostamenti[d2] = d2, d1
+        st.success("Scambio effettuato!"); st.rerun()
