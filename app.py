@@ -169,25 +169,37 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
     idx_p = nomi.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in nomi else 0
     scelto = st.selectbox("Cerca cliente:", nomi, index=idx_p)
+    
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
+        
         with st.form("edit"):
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
             ui = c1.text_input("Indirizzo", d.get('indirizzo', ''))
             uf = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
+            
+            # --- NUOVO COMPONENTE: ATTIVA/DISATTIVA ---
+            stato_attuale = "SI" if str(d.get('visitare', 'SI')).upper() == "SI" else "NO"
+            uv = c1.selectbox("Includere nel Giro Visite?", ["SI", "NO"], index=0 if stato_attuale == "SI" else 1)
+            
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
             um = c2.text_input("Mail", d.get('mail',''))
             uno = st.text_area("Note Cliente", d.get('note', ''))
+            
             if st.form_submit_button("💾 Salva e Sincronizza Cloud"):
                 st.session_state.df_master.at[idx, 'nome cliente'] = un
                 st.session_state.df_master.at[idx, 'indirizzo'] = ui
                 st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
+                st.session_state.df_master.at[idx, 'visitare'] = uv  # <--- Salva la scelta
                 st.session_state.df_master.at[idx, 'cellulare'] = uc
                 st.session_state.df_master.at[idx, 'mail'] = um
                 st.session_state.df_master.at[idx, 'note'] = uno
-                if save_to_gsheets(st.session_state.df_master): st.success("Sincronizzato!"); st.rerun()
+                
+                if save_to_gsheets(st.session_state.df_master):
+                    st.success(f"Dati di {un} aggiornati nel Cloud (Incluso: {uv})")
+                    st.rerun()
 
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
@@ -195,11 +207,22 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new"):
         nn = st.text_input("Ragione Sociale *")
         ni = st.text_input("Indirizzo")
+        nv = st.selectbox("Includere subito nei giri visita?", ["SI", "NO"])
         if st.form_submit_button("✅ Aggiungi al Cloud"):
             if nn:
-                nuovo = {'nome cliente': nn, 'indirizzo': ni, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'), 'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon}
+                nuovo = {
+                    'nome cliente': nn, 
+                    'indirizzo': ni, 
+                    'visitare': nv, # <--- Prende il valore dal selettore
+                    'frequenza (giorni)': 30, 
+                    'ultima visita': pd.Timestamp('2000-01-01'),
+                    'latitude': st.session_state.start_lat, 
+                    'longitude': st.session_state.start_lon
+                }
                 st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                if save_to_gsheets(st.session_state.df_master): st.success("Cliente aggiunto!"); st.rerun()
+                if save_to_gsheets(st.session_state.df_master):
+                    st.success("Cliente aggiunto correttamente!")
+                    st.rerun()
 
 # --- TAB: PARAMETRI (REINTEGRATA) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
