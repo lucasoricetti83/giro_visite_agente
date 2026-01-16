@@ -8,7 +8,7 @@ def load_data(url):
     return pd.read_csv(path)
 
 # Sostituisci il link qui sotto con il TUO
-URL_FOGLIO = "IL_TUO_LINK_QUI" 
+URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing" 
 
 try:
     df = load_data(URL_FOGLIO)
