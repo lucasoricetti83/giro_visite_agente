@@ -33,127 +33,148 @@ if 'df_reports' not in st.session_state:
     st.session_state.df_reports = pd.DataFrame(columns=['cliente', 'data', 'nota_visita', 'esito'])
 
 if 'start_lat' not in st.session_state: st.session_state.start_lat, st.session_state.start_lon = 43.1924, 13.5797
-if 'h_inizio' not in st.session_state: st.session_state.h_inizio, st.session_state.h_fine = time(9, 0), time(18, 0)
+if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
+if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
-# --- 3. LOGICA CALCOLO 8 SETTIMANE (SIMULATORE) ---
-def calcola_piano_8_settimane():
+# --- 3. LOGICA CALCOLO 8 SETTIMANE ---
+def calcola_piano_completo():
     if st.session_state.df_master.empty: return {}, datetime.now()
-    
     oggi = datetime.now()
     lun_ref = oggi - timedelta(days=oggi.weekday())
     df_sim = st.session_state.df_master.copy()
     piano = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
-    
     for s in range(1, 9):
         for g in range(5):
-            dt_attuale = (lun_ref + timedelta(weeks=s-1, days=g)).date()
-            # Gestione scambio giorni dai parametri
-            dt_logica = st.session_state.spostamenti.get(dt_attuale, dt_attuale)
-            
-            df_sim['g_passati'] = (pd.to_datetime(dt_logica) - df_sim['ultima visita']).dt.days.fillna(999)
-            urgenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_passati'] >= df_sim['frequenza (giorni)'])].to_dict('records')
-            
-            ora_s = datetime.combine(dt_attuale, st.session_state.h_inizio)
-            limite_s = datetime.combine(dt_attuale, st.session_state.h_fine)
-            pos_s = (st.session_state.start_lat, st.session_state.start_lon)
-            
-            while urgenti:
-                px = min(urgenti, key=lambda x: haversine(pos_s[0], pos_s[1], x['latitude'], x['longitude']))
-                dist = haversine(pos_s[0], pos_s[1], px['latitude'], px['longitude'])
-                arr = ora_s + timedelta(minutes=(dist/50)*60)
+            dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
+            dt_l = st.session_state.spostamenti.get(dt_c, dt_c)
+            df_sim['g_p'] = (pd.to_datetime(dt_l) - df_sim['ultima visita']).dt.days.fillna(999)
+            urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)'])].to_dict('records')
+            o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
+            while urg:
+                px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
+                arr = o_s + timedelta(minutes=(haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])/50)*60)
                 fine = arr + timedelta(minutes=st.session_state.durata_v)
-                
-                if fine <= limite_s:
-                    info = px.copy()
-                    info['ora_arrivo'] = arr.strftime("%H:%M")
-                    piano[f"Settimana {s}"][g].append(info)
-                    # Fondamentale: aggiorna l'ultima visita simulata per il prossimo calcolo
-                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_logica)
-                    ora_s, pos_s = fine, (px['latitude'], px['longitude'])
-                    urgenti.remove(px)
+                if fine <= datetime.combine(dt_c, st.session_state.h_fine):
+                    px['ora_arrivo'] = arr.strftime("%H:%M")
+                    piano[f"Settimana {s}"][g].append(px)
+                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_l)
+                    o_s, p_s = fine, (px['latitude'], px['longitude'])
+                    urg.remove(px)
                 else: break
     return piano, lun_ref
 
 # --- 4. INTERFACCIA ---
 if not st.session_state.df_master.empty:
-    agenda_completa, lunedi_base = calcola_piano_8_settimane()
-    t_oggi, t_sett, t_ana, t_nuovo, t_par = st.tabs(["🚀 Giro Oggi", "📅 Agenda 8 Sett", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"])
+    agenda, lun_base = calcola_piano_completo()
+    tabs = st.tabs(["🚀 Giro Oggi", "📅 Agenda 8 Sett", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"])
 
-    with t_oggi:
-        st.header(f"📍 Giro di Oggi")
+    # --- TAB 1: GIRO OGGI ---
+    with tabs[0]:
+        st.header(f"📍 Oggi: {datetime.now().strftime('%d/%m/%Y')}")
         idx_g = datetime.now().weekday()
         if idx_g < 5:
-            tappe = agenda_completa["Settimana 1"][idx_g]
+            tappe = agenda["Settimana 1"][idx_g]
             if tappe:
                 c1, c2 = st.columns([1, 2])
                 with c1:
                     for t in tappe:
                         with st.container(border=True):
                             st.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
-                            st.caption(f"📞 {t.get('cellulare','')} | 👤 {t.get('referente','')}")
-                            col_b1, col_b2 = st.columns(2)
-                            col_b1.link_button("🚗 Naviga", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
-                            with col_b2.popover("📝 Report"):
-                                with st.form(f"rep_{t['nome cliente']}"):
-                                    es = st.selectbox("Esito", ["Positivo", "Richiamare", "Negativo"], key=f"e_{t['nome cliente']}")
-                                    no = st.text_area("Note visita", key=f"n_{t['nome cliente']}")
+                            st.caption(f"👤 {t.get('referente','')} | 📞 {t.get('cellulare','')}")
+                            cb1, cb2 = st.columns(2)
+                            cb1.link_button("🚗 Naviga", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
+                            with cb2.popover("📝 Report"):
+                                with st.form(f"r_{t['nome cliente']}"):
+                                    es = st.selectbox("Esito", ["Positivo", "Richiamare", "Negativo"], key=f"es_{t['nome cliente']}")
+                                    no = st.text_area("Note", key=f"no_{t['nome cliente']}")
                                     if st.form_submit_button("Salva"):
-                                        nuovo = {'cliente': t['nome cliente'], 'data': datetime.now().strftime("%d/%m/%Y"), 'nota_visita': no, 'esito': es}
-                                        st.session_state.df_reports = pd.concat([st.session_state.df_reports, pd.DataFrame([nuovo])], ignore_index=True)
+                                        nuovo_r = {'cliente': t['nome cliente'], 'data': datetime.now().strftime("%d/%m/%Y"), 'nota_visita': no, 'esito': es}
+                                        st.session_state.df_reports = pd.concat([st.session_state.df_reports, pd.DataFrame([nuovo_r])], ignore_index=True)
                                         idx_m = st.session_state.df_master[st.session_state.df_master['nome cliente'] == t['nome cliente']].index[0]
                                         st.session_state.df_master.at[idx_m, 'ultima visita'] = pd.to_datetime(datetime.now().date())
                                         st.rerun()
                 with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-            else: st.info("Nessuna visita per oggi.")
+            else: st.info("Nessuna visita.")
 
-    with t_sett:
-        st.header("📅 Programmazione Prossime 8 Settimane")
-        s_sel = st.selectbox("Scegli la settimana da pianificare:", [f"Settimana {i}" for i in range(1, 9)])
+    # --- TAB 2: AGENDA 8 SETTIMANE ---
+    with tabs[1]:
+        s_sel = st.selectbox("Settimana:", [f"Settimana {i}" for i in range(1, 9)])
         cols = st.columns(5)
-        giorni_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
         for i, col in enumerate(cols):
             with col:
-                data_g = (lunedi_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
-                st.subheader(giorni_nomi[i])
-                st.caption(data_g.strftime("%d/%m"))
-                st.divider()
-                for v in agenda_completa[s_sel][i]:
-                    with st.container(border=True):
-                        st.caption(v['ora_arrivo'])
-                        st.write(f"**{v['nome cliente']}**")
+                dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
+                st.subheader(dt_g.strftime("%A")); st.caption(dt_g.strftime("%d/%m"))
+                for v in agenda[s_sel][i]:
+                    with st.container(border=True): st.caption(v['ora_arrivo']); st.write(v['nome cliente'])
 
-    with t_ana:
-        st.header("👤 Anagrafica e Cronologia")
+    # --- TAB 3: ANAGRAFICA & STORICO ---
+    with tabs[2]:
+        st.header("👤 Scheda Cliente")
         cerca = st.text_input("🔍 Cerca cliente:", "").lower()
-        lista = [n for n in sorted(st.session_state.df_master['nome cliente'].unique()) if cerca in n.lower()]
-        if lista:
-            scelto = st.selectbox("Cliente:", lista)
+        nomi = [n for n in sorted(st.session_state.df_master['nome cliente'].unique()) if cerca in n.lower()]
+        if nomi:
+            scelto = st.selectbox("Seleziona:", nomi)
+            idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
+            d = st.session_state.df_master.loc[idx]
+            
+            # 1. Visualizza Storico Report
+            st.subheader("📜 Storico Visite")
             reps = st.session_state.df_reports[st.session_state.df_reports['cliente'] == scelto]
             if not reps.empty:
-                st.subheader("📜 Storico Report")
                 for _, r in reps.iloc[::-1].iterrows():
                     with st.expander(f"📅 {r['data']} - {r['esito']}"): st.write(r['nota_visita'])
-            else: st.caption("Nessun report precedente.")
+            else: st.caption("Nessun report presente.")
+            
             st.divider()
-            # Form modifica dati (già presente)
-            st.info("Qui puoi modificare i dati anagrafici come prima.")
+            # 2. Modifica Anagrafica (RIPRISTINATO)
+            with st.form("edit_full"):
+                st.subheader("⚙️ Modifica Anagrafica")
+                ca, cb = st.columns(2)
+                with ca:
+                    un = st.text_input("Ragione Sociale", d['nome cliente'])
+                    ui = st.text_input("Indirizzo", d['indirizzo'])
+                    uf = st.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
+                    um = st.text_input("Mail", d.get('mail',''))
+                with cb:
+                    ur = st.text_input("Referente", d.get('referente',''))
+                    up = st.text_input("Posizione", d.get('posizione referente',''))
+                    uc = st.text_input("Cellulare", d.get('cellulare',''))
+                    uv = st.toggle("Abilita nel Giro", value=(d['visitare'] == 'SI'))
+                if st.form_submit_button("💾 Salva Dati"):
+                    st.session_state.df_master.at[idx, 'nome cliente'], st.session_state.df_master.at[idx, 'indirizzo'] = un, ui
+                    st.session_state.df_master.at[idx, 'frequenza (giorni)'], st.session_state.df_master.at[idx, 'mail'] = uf, um
+                    st.session_state.df_master.at[idx, 'referente'], st.session_state.df_master.at[idx, 'posizione referente'] = ur, up
+                    st.session_state.df_master.at[idx, 'cellulare'], st.session_state.df_master.at[idx, 'visitare'] = uc, ('SI' if uv else 'NO')
+                    st.success("Dati aggiornati!"); st.rerun()
 
-    with t_nuovo:
+    # --- TAB 4: NUOVO CLIENTE ---
+    with tabs[3]:
         st.header("➕ Nuovo Cliente")
-        with st.form("new"):
-            nome = st.text_input("Ragione Sociale")
-            if st.form_submit_button("Aggiungi"):
-                if nome:
-                    rigo = {'nome cliente': nome, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'), 'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon}
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([rigo])], ignore_index=True)
+        new_lat, new_lon = 0.0, 0.0
+        if st.button("📍 Geocalizza Posizione"):
+            gps = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_new')
+            if gps: new_lat, new_lon = gps['latitude'], gps['longitude']; st.success("Posizione acquisita!")
+        with st.form("new_c"):
+            nn = st.text_input("Ragione Sociale *")
+            ni = st.text_input("Indirizzo")
+            nla = st.number_input("Lat", value=new_lat if new_lat != 0 else st.session_state.start_lat, format="%.6f")
+            nlo = st.number_input("Lon", value=new_lon if new_lon != 0 else st.session_state.start_lon, format="%.6f")
+            if st.form_submit_button("✅ Aggiungi"):
+                if nn:
+                    r = {'nome cliente': nn, 'indirizzo': ni, 'latitude': nla, 'longitude': nlo, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01')}
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([r])], ignore_index=True)
                     st.rerun()
 
-    with t_par:
+    # --- TAB 5: PARAMETRI ---
+    with tabs[4]:
         st.header("⚙️ Parametri")
         st.session_state.h_inizio = st.time_input("Inizio", st.session_state.h_inizio)
         st.session_state.h_fine = st.time_input("Fine", st.session_state.h_fine)
-        if st.button("Reset Totale"):
-            st.cache_data.clear()
-            del st.session_state.df_master; st.rerun()
+        st.session_state.durata_v = st.slider("Minuti Visita", 15, 120, st.session_state.durata_v)
+        st.divider()
+        st.subheader("🔄 Sposta Giorno")
+        d_da = st.date_input("Da:", datetime.now()); d_a = st.date_input("A:", datetime.now() + timedelta(days=1))
+        if st.button("Scambia"): st.session_state.spostamenti[d_da] = d_a; st.session_state.spostamenti[d_a] = d_da; st.rerun()
+        if st.button("Ricarica Database"): del st.session_state.df_master; st.rerun()
