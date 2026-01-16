@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
-# Funzione per calcolare la distanza
 def haversine(lon1, lat1, lon2, lat2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
@@ -15,50 +14,41 @@ def haversine(lon1, lat1, lon2, lat2):
 st.set_page_config(page_title="Giro Visite", page_icon="🚗")
 st.title("🚗 Il Mio Giro Visite")
 
-# --- COLLO DI BOTTIGLIA: IL LINK ---
-# Assicurati che il link finisca con /edit?usp=sharing
-URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
+# Link del tuo foglio aggiornato
+URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv"
 
-def load_data(url):
-    try:
-        # Trasforma il link per il download diretto
-        csv_url = url.replace('/edit?usp=sharing', '/export?format=csv')
-        return pd.read_csv(csv_url)
-    except Exception as e:
-        st.error(f"Errore tecnico nel caricamento: {e}")
-        return None
+try:
+    # Caricamento dati
+    df = pd.read_csv(URL_FOGLIO)
+    
+    # Pulizia nomi colonne (toglie spazi e mette tutto in minuscolo per non sbagliare)
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # Riempire le date vuote con una data molto vecchia per non far crashare l'app
+    df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce').fillna(pd.Timestamp('2000-01-01'))
+    
+    oggi = datetime.now()
+    df['giorni_passati'] = (oggi - df['ultima visita']).dt.days
 
-df = load_data(URL_FOGLIO)
+    # Filtro: Scaduti + visitare == SI (usiamo i nomi minuscoli come puliti sopra)
+    # Colonna 'frequenza (giorni)' e 'visitare'
+    clienti_filtrati = df[
+        (df['giorni_passati'] >= df['frequenza (giorni)']) & 
+        (df['visitare'].astype(str).str.upper() == 'SI')
+    ].copy()
 
-if df is not None:
-    try:
-        # Verifichiamo che le colonne esistano (evita crash se scritte male nel foglio)
-        colonne_necessarie = ['Nome Cliente', 'Ultima Visita', 'Frequenza (giorni)', 'visitare', 'Latitudine', 'Longitudine']
-        ancora_colonne = [c for c in colonne_necessarie if c not in df.columns]
-        
-        if ancora_colonne:
-            st.error(f"Mancano queste colonne nel foglio Google: {ancora_colonne}")
-        else:
-            # Pulizia dati
-            df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
-            oggi = datetime.now()
-            df['Giorni Passati'] = (oggi - df['Ultima Visita']).dt.days
+    st.sidebar.header("Parametri")
+    ore_disp = st.sidebar.slider("Ore disponibili", 1, 12, 8)
+    
+    st.write(f"### 📍 Clienti pronti per oggi: {len(clienti_filtrati)}")
+    
+    if not clienti_filtrati.empty:
+        st.dataframe(clienti_filtrati[['nome cliente', 'indirizzo', 'giorni_passati']])
+        if st.button("🚀 Mostra Mappa"):
+            # Usiamo i nomi delle colonne minuscoli
+            st.map(clienti_filtrati[['latitudine', 'longitudine']])
+    else:
+        st.info("Nessun cliente trovato. Assicurati di aver scritto 'SI' nella colonna 'visitare' del foglio Google per i clienti con frequenza scaduta.")
 
-            # Filtro
-            clienti_filtrati = df[
-                (df['Giorni Passati'] >= df['Frequenza (giorni)']) & 
-                (df['visitare'].astype(str).str.upper() == 'SI')
-            ].copy()
-
-            st.write(f"### 📍 Clienti pronti per oggi: {len(clienti_filtrati)}")
-            
-            if not clienti_filtrati.empty:
-                st.dataframe(clienti_filtrati[['Nome Cliente', 'Indirizzo', 'Giorni Passati']])
-                
-                if st.button("🚀 Mostra Mappa e Calcola"):
-                    st.map(clienti_filtrati[['Latitudine', 'Longitudine']])
-            else:
-                st.info("Nessun cliente da visitare trovato (controlla le date o la colonna 'visitare').")
-                
-    except Exception as e:
-        st.error(f"Errore nell'elaborazione dei dati: {e}")
+except Exception as e:
+    st.error(f"Errore: {e}")
