@@ -5,24 +5,20 @@ from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
 from streamlit_js_eval import streamlit_js_eval
 
-# --- 1. CONFIGURAZIONE ---
+# --- 1. CONFIGURAZIONE E UTILS ---
 st.set_page_config(page_title="Giro Visite CRM Pro", layout="wide")
 
-# Funzione per calcolare distanze
 def haversine(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
     return 2 * 6371 * asin(sqrt(sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2))
 
-# Funzione per geocodificare il nome della città
 def get_coords(city_name):
     try:
-        geolocator = Nominatim(user_agent="giro_visite_app")
+        geolocator = Nominatim(user_agent="giro_visite_app_v2")
         location = geolocator.geocode(city_name)
-        if location:
-            return location.latitude, location.longitude
+        if location: return location.latitude, location.longitude
         return None
-    except:
-        return None
+    except: return None
 
 @st.cache_data(ttl=60)
 def fetch_data(url):
@@ -67,13 +63,12 @@ def calcola_piano():
     for s in range(1, 9):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
-            dt_l = st.session_state.spostamenti.get(dt_c, dt_c)
-            df_sim['g_p'] = (pd.to_datetime(dt_l) - df_sim['ultima visita']).dt.days.fillna(999)
+            dt_logica = st.session_state.spostamenti.get(dt_c, dt_c) # APPLICA LO SCAMBIO
+            df_sim['g_p'] = (pd.to_datetime(dt_logica) - df_sim['ultima visita']).dt.days.fillna(999)
             if s == 1 and g == oggi_dt.weekday():
                 urg = df_sim[(df_sim['visitare'] == 'SI') & ((df_sim['g_p'] >= df_sim['frequenza (giorni)']) | (df_sim['ultima visita'].dt.date == oggi_dt.date()))].to_dict('records')
             else:
                 urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)'])].to_dict('records')
-            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             while urg:
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
@@ -82,7 +77,7 @@ def calcola_piano():
                 if fine <= datetime.combine(dt_c, st.session_state.h_fine):
                     px['ora_arrivo'] = arr.strftime("%H:%M")
                     piano[f"Settimana {s}"][g].append(px)
-                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_l)
+                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_logica)
                     o_s, p_s = fine, (px['latitude'], px['longitude'])
                     urg.remove(px)
                 else: break
@@ -100,7 +95,7 @@ piano, lun_base = calcola_piano()
 
 # --- 🚀 GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
-    st.header(f"📍 Giro di Oggi ({st.session_state.start_city})")
+    st.header(f"📍 Oggi ({st.session_state.start_city})")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
         tappe = piano["Settimana 1"][idx_g]
@@ -156,75 +151,84 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         reps = st.session_state.df_reports[st.session_state.df_reports['cliente'] == scelto]
         if not reps.empty:
             for _, r in reps.iloc[::-1].iterrows():
-                with st.expander(f"📅 {r['data']} - {r['esito']}"): st.write(r['nota_visita'])
+                with st.expander(f"📅 {r['data']} - {r['esito']}"): st.write(r['nota_vis_visita'] if 'nota_vis_visita' in r else r['nota_visita'])
         st.divider()
         with st.form("edit"):
             un = st.text_input("Ragione Sociale", d['nome cliente'])
             uf = st.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
             uc = st.text_input("Cellulare", d.get('cellulare',''))
+            ut = st.text_input("Telefono", d.get('telefono',''))
             um = st.text_input("Mail", d.get('mail',''))
             if st.form_submit_button("Salva"):
                 st.session_state.df_master.at[idx, 'nome cliente'], st.session_state.df_master.at[idx, 'frequenza (giorni)'] = un, uf
                 st.session_state.df_master.at[idx, 'cellulare'], st.session_state.df_master.at[idx, 'mail'] = uc, um
+                st.session_state.df_master.at[idx, 'telefono'] = ut
                 st.rerun()
 
-# --- ⚙️ PARAMETRI (PUNTO 1 AGGIORNATO CON NOME PAESE) ---
+# --- ⚙️ PARAMETRI (CON SCAMBIA GIORNO) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione Sistema")
     
-    # 1. PUNTO DI PARTENZA (Con Nome Paese)
+    # 1. PUNTO DI PARTENZA
     st.subheader("1. Punto di Partenza")
     nuova_citta = st.text_input("Inserisci Paese/Città di Partenza:", st.session_state.start_city)
     if nuova_citta != st.session_state.start_city:
         coords = get_coords(nuova_citta)
         if coords:
-            st.session_state.start_city = nuova_citta
-            st.session_state.start_lat, st.session_state.start_lon = coords
-            st.success(f"📍 Punto di partenza aggiornato a: {nuova_citta}")
-            st.rerun()
-        else:
-            st.error("❌ Città non trovata. Riprova con un nome più preciso.")
-    
-    if st.button("🎯 Usa Posizione GPS Attuale", use_container_width=True):
+            st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nuova_citta, coords[0], coords[1]
+            st.success(f"📍 Partenza aggiornata!"); st.rerun()
+    if st.button("🎯 Usa GPS Attuale", use_container_width=True):
         g = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_p')
         if g:
-            st.session_state.start_lat, st.session_state.start_lon = g['latitude'], g['longitude']
-            st.session_state.start_city = "Posizione GPS"
-            st.success("Posizione acquisita!"); st.rerun()
+            st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = g['latitude'], g['longitude'], "Posizione GPS"
+            st.rerun()
     
     st.divider()
-    
     # 2 & 3. ORARI
-    st.subheader("2. Orario Inizio")
-    st.session_state.h_inizio = st.time_input("Seleziona ora inizio lavoro", st.session_state.h_inizio)
-    
-    st.subheader("3. Orario Fine")
-    st.session_state.h_fine = st.time_input("Seleziona ora fine lavoro", st.session_state.h_fine)
+    st.subheader("2. Orario Inizio / 3. Orario Fine")
+    c1, c2 = st.columns(2)
+    st.session_state.h_inizio = c1.time_input("Inizio", st.session_state.h_inizio)
+    st.session_state.h_fine = c2.time_input("Fine", st.session_state.h_fine)
     
     st.divider()
-    
     # 4. DURATA
     st.subheader("4. Durata Visite")
-    st.session_state.durata_v = st.slider("Minuti medi per ogni tappa", 15, 120, st.session_state.durata_v)
+    st.session_state.durata_v = st.slider("Minuti medi", 15, 120, st.session_state.durata_v)
     
     st.divider()
-    
-    # 5. GESTIONE DATABASE
-    st.subheader("5. Database & Reset")
-    if st.button("🔄 Reset Totale e Ricarica Database", use_container_width=True):
+    # 5. RESET
+    st.subheader("5. Database")
+    if st.button("🔄 Reset Totale", use_container_width=True):
         st.cache_data.clear()
         if 'df_master' in st.session_state: del st.session_state.df_master
         st.rerun()
 
+    st.divider()
+    # 6. SCAMBIA GIORNO (RIPRISTINATO)
+    st.subheader("🔄 Funzione: Scambia Giorno")
+    st.write("Scambia le visite tra due date specifiche.")
+    col_d1, col_d2 = st.columns(2)
+    d_da = col_d1.date_input("Sposta da:", datetime.now())
+    d_a = col_d2.date_input("A giorno:", datetime.now() + timedelta(days=1))
+    if st.button("🔄 Esegui Scambio"):
+        st.session_state.spostamenti[d_da] = d_a
+        st.session_state.spostamenti[d_a] = d_da
+        st.success(f"Giri del {d_da} e {d_a} scambiati!"); st.rerun()
+    if st.session_state.spostamenti and st.button("Annulla tutti gli scambi"):
+        st.session_state.spostamenti = {}
+        st.rerun()
+
 # --- ALTRI TAB ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
-    st.header("Pianificazione 8 Settimane")
+    st.header("Agenda 8 Settimane")
     s_sel = st.selectbox("Settimana:", [f"Settimana {i}" for i in range(1, 9)])
     cols = st.columns(5)
     for i, col in enumerate(cols):
         with col:
             dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
-            st.subheader(dt_g.strftime("%A"))
+            # Mostra icona se il giorno è scambiato
+            is_swapped = dt_g in st.session_state.spostamenti
+            st.subheader(f"{'🔄 ' if is_swapped else ''}{dt_g.strftime('%A')}")
             for v in agenda[s_sel][i]:
                 with st.container(border=True):
                     st.write(f"**{v['nome cliente']}**")
