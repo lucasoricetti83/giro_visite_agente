@@ -66,21 +66,20 @@ def calcola_piano():
                 else: break
     return piano, lun_ref
 
-# --- 4. NAVBAR PERSONALIZZATA ---
-st.markdown("### 🗺️ Giro Visite Navigation")
+# --- 4. NAVBAR ---
 c_nav = st.columns(5)
 menu = ["🚀 Giro Oggi", "📅 Agenda 8 Sett", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
 for i, m in enumerate(menu):
     if c_nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m
         st.rerun()
-
 st.divider()
 
-# --- 5. CONTENUTO PAGINE ---
 piano, lun_base = calcola_piano()
 
-# GIRO OGGI
+# --- 5. LOGICA PAGINE ---
+
+# 🚀 GIRO OGGI
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro del Giorno")
     idx_g = datetime.now().weekday()
@@ -109,18 +108,17 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                                     st.session_state.df_master.at[idx_m, 'ultima visita'] = pd.to_datetime(datetime.now().date())
                                     st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-        else: st.info("Nessuna visita oggi.")
+        else: st.info("Nessuna visita programmata.")
 
-# AGENDA 8 SETTIMANE
+# 📅 AGENDA 8 SETTIMANE
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
     st.header("Programmazione Strategica")
     s_sel = st.selectbox("Settimana:", [f"Settimana {i}" for i in range(1, 9)])
     cols = st.columns(5)
-    g_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
     for i, col in enumerate(cols):
         with col:
             dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
-            st.subheader(g_nomi[i]); st.caption(dt_g.strftime("%d/%m"))
+            st.subheader(dt_g.strftime("%A")); st.caption(dt_g.strftime("%d/%m"))
             for v in piano[s_sel][i]:
                 with st.container(border=True):
                     st.write(f"**{v['nome cliente']}**")
@@ -129,22 +127,37 @@ elif st.session_state.active_tab == "📅 Agenda 8 Sett":
                         st.session_state.active_tab = "👤 Anagrafica"
                         st.rerun()
 
-# ANAGRAFICA
+# 👤 ANAGRAFICA (CON TASTO ELIMINA)
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Cliente")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
     idx_p = nomi.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in nomi else 0
     scelto = st.selectbox("Seleziona cliente:", nomi, index=idx_p)
+    
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
+        
+        # --- ZONA ELIMINAZIONE ---
+        with st.expander("⚠️ Zona Pericolo (Eliminazione)"):
+            st.write(f"Sei sicuro di voler eliminare **{scelto}** dal database?")
+            if st.button(f"Sì, elimina definitivamente {scelto}", type="primary"):
+                st.session_state.df_master = st.session_state.df_master.drop(idx).reset_index(drop=True)
+                st.session_state.cliente_selezionato = None
+                st.success(f"Cliente {scelto} eliminato con successo!")
+                st.session_state.active_tab = "🚀 Giro Oggi"
+                st.rerun()
+        
+        st.divider()
         st.subheader("📜 Storico Report")
         reps = st.session_state.df_reports[st.session_state.df_reports['cliente'] == scelto]
         if not reps.empty:
             for _, r in reps.iloc[::-1].iterrows():
                 with st.expander(f"📅 {r['data']} - {r['esito']}"): st.write(r['nota_visita'])
+        
         st.divider()
-        with st.form("edit_full"):
+        with st.form("edit_full_v3"):
+            st.subheader("⚙️ Modifica Dati")
             c1, c2 = st.columns(2)
             with c1:
                 un = st.text_input("Ragione Sociale", d['nome cliente'])
@@ -157,17 +170,17 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 um = st.text_input("Mail", d.get('mail',''))
                 uv = st.toggle("Abilita nel Giro", value=(d['visitare'] == 'SI'))
             unot = st.text_area("Note Generali", d.get('note',''))
-            if st.form_submit_button("💾 Salva"):
+            if st.form_submit_button("💾 Salva Modifiche"):
                 for k, v in {"nome cliente":un, "indirizzo":ui, "frequenza (giorni)":uf, "mail":um, "telefono":ut, "referente":ur, "cellulare":uc, "note":unot, "visitare":('SI' if uv else 'NO')}.items():
                     st.session_state.df_master.at[idx, k] = v
                 st.success("Salvato!"); st.rerun()
 
-# NUOVO CLIENTE
+# ➕ NUOVO CLIENTE
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
-    st.header("➕ Inserisci Nuovo Cliente")
-    if st.button("📍 Geocalizza Posizione Attuale"):
+    st.header("➕ Nuovo Cliente")
+    if st.button("📍 Geocalizza Ora"):
         gps = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_final')
-        if gps: st.session_state.start_lat, st.session_state.start_lon = gps['latitude'], gps['longitude']; st.success("Posizione acquisita!")
+        if gps: st.session_state.start_lat, st.session_state.start_lon = gps['latitude'], gps['longitude']; st.success("Coordinate acquisite!")
     with st.form("new_c"):
         nn = st.text_input("Ragione Sociale")
         if st.form_submit_button("✅ Aggiungi"):
@@ -177,11 +190,11 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 st.session_state.active_tab = "🚀 Giro Oggi"
                 st.rerun()
 
-# PARAMETRI
+# ⚙️ PARAMETRI
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Impostazioni")
     st.session_state.h_inizio = st.time_input("Inizio", st.session_state.h_inizio)
     st.session_state.h_fine = st.time_input("Fine", st.session_state.h_fine)
-    if st.button("Reset Totale"):
+    if st.button("Ricarica Database Originale (Reset)"):
         st.cache_data.clear()
         del st.session_state.df_master; st.rerun()
