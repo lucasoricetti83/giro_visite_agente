@@ -63,5 +63,4 @@ def calcola_agenda_completa():
             p_sim = (st.session_state.start_lat, st.session_state.start_lon)
             
             while urg:
-                px = min(urg, key=lambda x: haversine(p_sim[0], p_sim[1], x['latitude'], x['longitude']))
-                dist = haversine(p_sim
+                px = min(urg, key=lambda x: haversine(p
