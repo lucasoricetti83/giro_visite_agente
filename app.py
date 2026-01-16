@@ -19,7 +19,7 @@ st.title("📊 Gestione Visite Real-Time")
 
 # --- CONNESSIONE GOOGLE SHEETS ---
 # Inserisci qui il link del tuo foglio Google tra le virgolette
-URL_FOGLIO = "INSERISCI_QUI_IL_TUO_LINK_DI_GOOGLE_SHEETS"
+URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
