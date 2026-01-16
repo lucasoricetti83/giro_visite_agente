@@ -30,7 +30,7 @@ def fetch_data(url):
     except:
         return pd.DataFrame()
 
-# --- 3. INIZIALIZZAZIONE SESSION STATE (Memoria App) ---
+# --- 3. INIZIALIZZAZIONE SESSION STATE ---
 if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.1924
 if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5797
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
@@ -38,12 +38,11 @@ if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
-# Caricamento dati iniziale
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv&gid=240777132"
 if 'df_master' not in st.session_state:
     st.session_state.df_master = fetch_data(URL_FOGLIO)
 
-# --- 4. LOGICA DI CALCOLO AGENDA ---
+# --- 4. LOGICA DI CALCOLO ---
 def calcola_agenda_completa():
     if st.session_state.df_master.empty:
         return {}, datetime.now()
@@ -56,7 +55,6 @@ def calcola_agenda_completa():
     for s in range(1, 9):
         for g in range(5):
             data_corrente = (lunedi_ref + timedelta(weeks=s-1, days=g)).date()
-            # Gestione spostamento logico del giorno
             data_logica = st.session_state.spostamenti.get(data_corrente, data_corrente)
             
             df_sim['g_passati'] = (pd.to_datetime(data_logica) - df_sim['ultima visita']).dt.days
@@ -76,4 +74,28 @@ def calcola_agenda_completa():
                     info = px.copy()
                     info['ora_arrivo'] = arr.strftime("%H:%M")
                     piano[f"Settimana {s}"][g].append(info)
-                    df_sim.loc[df_sim['nome
+                    # AGGIORNAMENTO RIGA 79 CORRETTO
+                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(data_logica)
+                    o_sim, p_sim = fine, (px['latitude'], px['longitude'])
+                    urg.remove(px)
+                else:
+                    break
+    return piano, lunedi_ref
+
+# --- 5. INTERFACCIA ---
+if not st.session_state.df_master.empty:
+    agenda_totale, lun_ref = calcola_agenda_completa()
+    
+    t_oggi, t_sett, t_ana, t_par = st.tabs(["🚀 Giro di Oggi", "📅 Agenda 8 Settimane", "👤 Anagrafica", "⚙️ Parametri"])
+
+    with t_oggi:
+        oggi_dt = datetime.now()
+        st.header(f"📍 Giro del Giorno: {oggi_dt.strftime('%d/%m/%Y')}")
+        idx_g = oggi_dt.weekday()
+        if idx_g < 5:
+            tappe = agenda_totale["Settimana 1"][idx_g]
+            if tappe:
+                c1, c2 = st.columns([1, 2])
+                with c1:
+                    for t in tappe:
+                        with st.container(border=True):
