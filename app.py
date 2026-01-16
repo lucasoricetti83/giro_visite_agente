@@ -5,10 +5,10 @@ from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
 from streamlit_js_eval import streamlit_js_eval
 
-# --- CONFIGURAZIONE PAGINA ---
+# --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Giro Visite & CRM Pro", layout="wide")
 
-# --- FUNZIONI DI CALCOLO ---
+# --- 2. FUNZIONI TECNICHE ---
 def haversine(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
     dlon = lon2 - lon1
@@ -30,7 +30,7 @@ def fetch_data(url):
     except:
         return pd.DataFrame()
 
-# --- INIZIALIZZAZIONE SESSION STATE ---
+# --- 3. INIZIALIZZAZIONE SESSION STATE (Memoria App) ---
 if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.1924
 if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5797
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
@@ -38,13 +38,16 @@ if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
+# Caricamento dati iniziale
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv&gid=240777132"
-
 if 'df_master' not in st.session_state:
     st.session_state.df_master = fetch_data(URL_FOGLIO)
 
-# --- LOGICA CALCOLO AGENDA ---
+# --- 4. LOGICA DI CALCOLO AGENDA ---
 def calcola_agenda_completa():
+    if st.session_state.df_master.empty:
+        return {}, datetime.now()
+    
     oggi = datetime.now()
     lunedi_ref = oggi - timedelta(days=oggi.weekday())
     df_sim = st.session_state.df_master.copy()
@@ -53,6 +56,7 @@ def calcola_agenda_completa():
     for s in range(1, 9):
         for g in range(5):
             data_corrente = (lunedi_ref + timedelta(weeks=s-1, days=g)).date()
+            # Gestione spostamento logico del giorno
             data_logica = st.session_state.spostamenti.get(data_corrente, data_corrente)
             
             df_sim['g_passati'] = (pd.to_datetime(data_logica) - df_sim['ultima visita']).dt.days
@@ -63,4 +67,13 @@ def calcola_agenda_completa():
             p_sim = (st.session_state.start_lat, st.session_state.start_lon)
             
             while urg:
-                px = min(urg, key=lambda x: haversine(p
+                px = min(urg, key=lambda x: haversine(p_sim[0], p_sim[1], x['latitude'], x['longitude']))
+                dist = haversine(p_sim[0], p_sim[1], px['latitude'], px['longitude'])
+                arr = o_sim + timedelta(minutes=(dist/50)*60)
+                fine = arr + timedelta(minutes=st.session_state.durata_v)
+                
+                if fine <= limite_sim:
+                    info = px.copy()
+                    info['ora_arrivo'] = arr.strftime("%H:%M")
+                    piano[f"Settimana {s}"][g].append(info)
+                    df_sim.loc[df_sim['nome
