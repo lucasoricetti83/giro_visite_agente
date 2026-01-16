@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 from math import radians, cos, sin, asin, sqrt
 
-# --- FUNZIONI ---
+# Funzione per calcolare la distanza
 def haversine(lon1, lat1, lon2, lat2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
@@ -12,50 +12,53 @@ def haversine(lon1, lat1, lon2, lat2):
     c = 2 * asin(sqrt(a))
     return c * 6371
 
-def load_data(url):
-    # Trasforma il link normale in un link di download diretto per Python
-    csv_url = url.replace('/edit?usp=sharing', '/export?format=csv')
-    csv_url = csv_url.replace('/edit#gid=', '/export?format=csv&gid=')
-    return pd.read_csv(csv_url)
-
-# --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Giro Visite", page_icon="🚗")
 st.title("🚗 Il Mio Giro Visite")
 
-# SOSTITUISCI IL LINK QUI SOTTO CON IL TUO
+# --- COLLO DI BOTTIGLIA: IL LINK ---
+# Assicurati che il link finisca con /edit?usp=sharing
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
 
-try:
-    df = load_data(URL_FOGLIO)
-    
-    # Pulizia date
-    df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
-    oggi = datetime.now()
-    df['Giorni Passati'] = (oggi - df['Ultima Visita']).dt.days
+def load_data(url):
+    try:
+        # Trasforma il link per il download diretto
+        csv_url = url.replace('/edit?usp=sharing', '/export?format=csv')
+        return pd.read_csv(csv_url)
+    except Exception as e:
+        st.error(f"Errore tecnico nel caricamento: {e}")
+        return None
 
-    # Filtro: Scaduti + Colonna 'visitare' = SI
-    # Nota: assicurati che nel foglio la colonna si chiami 'visitare'
-    clienti_filtrati = df[
-        (df['Giorni Passati'] >= df['Frequenza (giorni)']) & 
-        (df['visitare'].astype(str).str.upper() == 'SI')
-    ].copy()
+df = load_data(URL_FOGLIO)
 
-    st.sidebar.header("Parametri")
-    ore_disp = st.sidebar.slider("Ore disponibili", 1, 12, 8)
-    
-    # Coordinate base (Fermo/Ascoli)
-    CASA_LAT, CASA_LON = 43.1932389, 13.5792209
-
-    st.write(f"### Clienti pronti per oggi: {len(clienti_filtrati)}")
-    
-    if st.button("🚀 Calcola Percorso"):
-        if clienti_filtrati.empty:
-            st.warning("Nessun cliente con 'SI' nella colonna visitare.")
+if df is not None:
+    try:
+        # Verifichiamo che le colonne esistano (evita crash se scritte male nel foglio)
+        colonne_necessarie = ['Nome Cliente', 'Ultima Visita', 'Frequenza (giorni)', 'visitare', 'Latitudine', 'Longitudine']
+        ancora_colonne = [c for c in colonne_necessarie if c not in df.columns]
+        
+        if ancora_colonne:
+            st.error(f"Mancano queste colonne nel foglio Google: {ancora_colonne}")
         else:
-            # Qui il calcolo del giro (Nearest Neighbor)
-            st.success("Giro calcolato con successo!")
-            st.dataframe(clienti_filtrati[['Nome Cliente', 'Indirizzo']])
-            st.map(clienti_filtrati[['Latitudine', 'Longitudine']])
+            # Pulizia dati
+            df['Ultima Visita'] = pd.to_datetime(df['Ultima Visita'], dayfirst=True)
+            oggi = datetime.now()
+            df['Giorni Passati'] = (oggi - df['Ultima Visita']).dt.days
 
-except Exception as e:
-    st.error(f"Errore nel collegamento al foglio: {e}")
+            # Filtro
+            clienti_filtrati = df[
+                (df['Giorni Passati'] >= df['Frequenza (giorni)']) & 
+                (df['visitare'].astype(str).str.upper() == 'SI')
+            ].copy()
+
+            st.write(f"### 📍 Clienti pronti per oggi: {len(clienti_filtrati)}")
+            
+            if not clienti_filtrati.empty:
+                st.dataframe(clienti_filtrati[['Nome Cliente', 'Indirizzo', 'Giorni Passati']])
+                
+                if st.button("🚀 Mostra Mappa e Calcola"):
+                    st.map(clienti_filtrati[['Latitudine', 'Longitudine']])
+            else:
+                st.info("Nessun cliente da visitare trovato (controlla le date o la colonna 'visitare').")
+                
+    except Exception as e:
+        st.error(f"Errore nell'elaborazione dei dati: {e}")
