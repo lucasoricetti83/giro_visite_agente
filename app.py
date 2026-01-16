@@ -2,14 +2,27 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time
 from math import radians, cos, sin, asin, sqrt
+from geopy.geocoders import Nominatim
 from streamlit_js_eval import streamlit_js_eval
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="Giro Visite CRM Pro", layout="wide")
 
+# Funzione per calcolare distanze
 def haversine(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
     return 2 * 6371 * asin(sqrt(sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2))
+
+# Funzione per geocodificare il nome della città
+def get_coords(city_name):
+    try:
+        geolocator = Nominatim(user_agent="giro_visite_app")
+        location = geolocator.geocode(city_name)
+        if location:
+            return location.latitude, location.longitude
+        return None
+    except:
+        return None
 
 @st.cache_data(ttl=60)
 def fetch_data(url):
@@ -36,8 +49,9 @@ if 'df_reports' not in st.session_state:
     st.session_state.df_reports = pd.DataFrame(columns=['cliente', 'data', 'nota_visita', 'esito'])
 
 # Parametri Default
-if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.1924
-if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5797
+if 'start_city' not in st.session_state: st.session_state.start_city = "Ancona"
+if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.6158
+if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5189
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
@@ -59,6 +73,7 @@ def calcola_piano():
                 urg = df_sim[(df_sim['visitare'] == 'SI') & ((df_sim['g_p'] >= df_sim['frequenza (giorni)']) | (df_sim['ultima visita'].dt.date == oggi_dt.date()))].to_dict('records')
             else:
                 urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)'])].to_dict('records')
+            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             while urg:
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
@@ -85,7 +100,7 @@ piano, lun_base = calcola_piano()
 
 # --- 🚀 GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
-    st.header(f"📍 Giro di Oggi")
+    st.header(f"📍 Giro di Oggi ({st.session_state.start_city})")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
         tappe = piano["Settimana 1"][idx_g]
@@ -153,19 +168,28 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 st.session_state.df_master.at[idx, 'cellulare'], st.session_state.df_master.at[idx, 'mail'] = uc, um
                 st.rerun()
 
-# --- ⚙️ PARAMETRI (I 5 PUNTI) ---
+# --- ⚙️ PARAMETRI (PUNTO 1 AGGIORNATO CON NOME PAESE) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione Sistema")
     
-    # 1. PUNTO DI PARTENZA
+    # 1. PUNTO DI PARTENZA (Con Nome Paese)
     st.subheader("1. Punto di Partenza")
-    c_lat, c_lon = st.columns(2)
-    st.session_state.start_lat = c_lat.number_input("Latitudine Default", value=st.session_state.start_lat, format="%.6f")
-    st.session_state.start_lon = c_lon.number_input("Longitudine Default", value=st.session_state.start_lon, format="%.6f")
+    nuova_citta = st.text_input("Inserisci Paese/Città di Partenza:", st.session_state.start_city)
+    if nuova_citta != st.session_state.start_city:
+        coords = get_coords(nuova_citta)
+        if coords:
+            st.session_state.start_city = nuova_citta
+            st.session_state.start_lat, st.session_state.start_lon = coords
+            st.success(f"📍 Punto di partenza aggiornato a: {nuova_citta}")
+            st.rerun()
+        else:
+            st.error("❌ Città non trovata. Riprova con un nome più preciso.")
+    
     if st.button("🎯 Usa Posizione GPS Attuale", use_container_width=True):
         g = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_p')
         if g:
             st.session_state.start_lat, st.session_state.start_lon = g['latitude'], g['longitude']
+            st.session_state.start_city = "Posizione GPS"
             st.success("Posizione acquisita!"); st.rerun()
     
     st.divider()
@@ -186,19 +210,11 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.divider()
     
     # 5. GESTIONE DATABASE
-    st.subheader("5. Gestione Database & Reset")
-    if st.button("🔄 Reset Totale e Ricarica da Google Sheets", use_container_width=True):
+    st.subheader("5. Database & Reset")
+    if st.button("🔄 Reset Totale e Ricarica Database", use_container_width=True):
         st.cache_data.clear()
         if 'df_master' in st.session_state: del st.session_state.df_master
         st.rerun()
-
-    st.divider()
-    st.subheader("🔄 Funzioni Extra: Sposta Giorno")
-    col_d1, col_d2 = st.columns(2)
-    d_da = col_d1.date_input("Sposta da:", datetime.now())
-    d_a = col_d2.date_input("A giorno:", datetime.now() + timedelta(days=1))
-    if st.button("🔄 Scambia Giri"):
-        st.session_state.spostamenti[d_da] = d_a; st.session_state.spostamenti[d_a] = d_da; st.rerun()
 
 # --- ALTRI TAB ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
