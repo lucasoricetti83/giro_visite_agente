@@ -12,50 +12,71 @@ def haversine(lon1, lat1, lon2, lat2):
     c = 2 * asin(sqrt(a))
     return c * 6371
 
-# --- CONFIGURAZIONE APP ---
-st.set_page_config(page_title="Giro Visite Agente", page_icon="🚗")
-st.title("🚗 Il Mio Giro Visite")
+st.set_page_config(page_title="Gestione Clienti Live", layout="wide")
+st.title("🚗 Seleziona i Clienti da Visitare")
 
-# Link del tuo foglio in formato export CSV
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv"
 
 try:
-    # Caricamento dati
-    df = pd.read_csv(URL_FOGLIO)
+    # 1. Carichiamo tutti i dati
+    df_raw = pd.read_csv(URL_FOGLIO)
+    df_raw.columns = df_raw.columns.str.strip().str.lower()
     
-    # PULIZIA COLONNE: Trasformiamo tutto in minuscolo e togliamo spazi extra
-    df.columns = df.columns.str.strip().str.lower()
+    # 2. Pulizia Date
+    df_raw['ultima visita'] = pd.to_datetime(df_raw['ultima visita'], dayfirst=True, errors='coerce')
     
-    # Gestione date vuote (se manca la data, mettiamo una data vecchia)
-    df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce').fillna(pd.Timestamp('2020-01-01'))
+    # Creiamo una colonna "Seleziona" nell'app (inizialmente basata su cosa c'è nel foglio)
+    if 'visitare' not in df_raw.columns:
+        df_raw['visitare'] = "NO"
     
-    # Calcolo giorni passati
-    oggi = datetime.now()
-    df['giorni_passati'] = (oggi - df['ultima visita']).dt.days
+    # Convertiamo la colonna visitare in valori Booleani (True/False) per avere le checkbox nell'app
+    df_raw['vai'] = df_raw['visitare'].astype(str).str.upper() == 'SI'
 
-    # FILTRO: Scaduti (giorni passati >= frequenza) E visitare == SI
-    # Nota: usiamo i nomi delle colonne tutti in minuscolo
-    clienti_filtrati = df[
-        (df['giorni_passati'] >= df['frequenza (giorni)']) & 
-        (df['visitare'].astype(str).str.upper() == 'SI')
-    ].copy()
+    st.write("### 📝 Lista Completa Clienti")
+    st.info("Spunta i clienti che vuoi includere nel giro di oggi nella colonna 'VAI'")
 
-    st.sidebar.header("Parametri Giro")
-    ore_disp = st.sidebar.slider("Ore disponibili oggi", 1, 12, 8)
-    
-    st.write(f"### 📍 Clienti pronti per oggi: {len(clienti_filtrati)}")
-    
-    if not clienti_filtrati.empty:
-        # Mostriamo la tabella (usando i nomi minuscoli per i dati)
-        st.dataframe(clienti_filtrati[['nome cliente', 'indirizzo', 'giorni_passati']])
+    # 3. EDITOR DI DATI (Qui puoi scegliere chi visitare)
+    # Mostriamo solo le colonne principali per non fare confusione
+    edited_df = st.data_editor(
+        df_raw[['vai', 'nome cliente', 'indirizzo', 'ultima visita', 'frequenza (giorni)']],
+        column_config={
+            "vai": st.column_config.CheckboxColumn("VAI", default=False),
+            "ultima visita": st.column_config.DateColumn("Ultima Visita", format="DD/MM/YYYY"),
+        },
+        disabled=["nome cliente", "indirizzo", "ultima visita", "frequenza (giorni)"], # Blocca le altre colonne
+        hide_index=True,
+    )
+
+    # 4. FILTRIAMO I SELEZIONATI
+    clienti_per_giro = edited_df[edited_df['vai'] == True].copy()
+
+    # Recuperiamo le coordinate per i selezionati dal dataframe originale
+    clienti_per_giro = clienti_per_giro.merge(df_raw[['nome cliente', 'latitudine', 'longitudine']], on='nome cliente')
+
+    st.divider()
+
+    if not clienti_per_giro.empty:
+        st.success(f"Hai selezionato {len(clienti_per_giro)} clienti.")
         
-        if st.button("🚀 Calcola Percorso e Mappa"):
-            st.success("Giro calcolato!")
-            # Mostra i punti sulla mappa
-            st.map(clienti_filtrati[['latitudine', 'longitudine']])
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.write("### 📋 Riepilogo Selezione")
+            for n in clienti_per_giro['nome cliente']:
+                st.write(f"- {n}")
+        
+        with col2:
+            st.write("### 📍 Mappa del Giro")
+            st.map(clienti_per_giro[['latitudine', 'longitudine']])
+            
+        if st.button("🗺️ Apri tutti su Google Maps (Sperimentale)"):
+            # Genera un link con più tappe (funziona meglio su PC che su iPhone)
+            base_url = "https://www.google.com/maps/dir/"
+            coords = "/".join([f"{r['latitudine']},{r['longitudine']}" for i, r in clienti_per_giro.iterrows()])
+            st.link_button("👉 Clicca per l'itinerario", base_url + coords)
+            
     else:
-        st.info("Nessun cliente trovato. Ricorda di mettere 'SI' nella colonna 'visitare' sul foglio Google per i clienti che vuoi vedere oggi.")
+        st.warning("Seleziona almeno un cliente dalla tabella sopra per vedere la mappa.")
 
 except Exception as e:
-    st.error(f"Errore tecnico: {e}")
-    st.write("Verifica che nel foglio Google ci siano le colonne: Nome Cliente, Ultima Visita, frequenza (giorni), visitare, Latitudine, Longitudine")
+    st.error(f"Errore: {e}")
