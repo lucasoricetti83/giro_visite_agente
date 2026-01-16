@@ -10,21 +10,18 @@ from streamlit_gsheets import GSheetsConnection
 # --- 1. CONFIGURAZIONE E CONNESSIONE ---
 st.set_page_config(page_title="Giro Visite CRM Cloud", layout="wide")
 
-# Link al tuo foglio Google specifico
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def save_to_gsheets(df):
-    """Salva il dataframe direttamente sul Foglio Google"""
     try:
-        # Pulizia: non salviamo le colonne temporanee create per i calcoli della giornata
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo']]
         conn.update(spreadsheet=URL_FOGLIO, data=df[cols_to_save])
         st.cache_data.clear() 
         return True
     except Exception as e:
-        st.error(f"Errore durante il salvataggio sul Cloud: {e}")
+        st.error(f"Errore Cloud: {e}")
         return False
 
 # --- 2. UTILS ---
@@ -45,34 +42,25 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        
-        # Colonne necessarie per il CRM
         colonne_crm = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude']
         for col in colonne_crm:
             if col not in df.columns: df[col] = ""
-            
-        # Conversione dati
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
-        
         df['visitare'] = df['visitare'].replace("", "SI").fillna("SI").astype(str).str.upper()
         df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
-        if 'data_precedente' not in df.columns: df['data_precedente'] = df['ultima visita']
-        
         return df.dropna(subset=['nome cliente', 'latitude', 'longitude'])
     except Exception as e:
-        st.error(f"Errore nel caricamento dal Cloud: {e}")
+        st.error(f"Errore fetch: {e}")
         return pd.DataFrame()
 
 # --- 3. STATO DELL'APP ---
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
-if 'df_master' not in st.session_state:
-    st.session_state.df_master = fetch_data()
-if 'df_reports' not in st.session_state:
-    st.session_state.df_reports = pd.DataFrame(columns=['cliente', 'data', 'nota_visita', 'esito'])
+if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
+if 'df_reports' not in st.session_state: st.session_state.df_reports = pd.DataFrame(columns=['cliente', 'data', 'nota_visita', 'esito'])
 
-# Parametri Default
+# Parametri Default (se non esistono)
 if 'start_city' not in st.session_state: st.session_state.start_city = "Ancona"
 if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.6158
 if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5189
@@ -81,7 +69,7 @@ if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
-# --- 4. LOGICA CALCOLO GIRO ---
+# --- 4. CALCOLO PIANO ---
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi_dt = datetime.now()
@@ -125,7 +113,7 @@ for i, m in enumerate(menu):
 st.divider()
 agenda, lun_base = calcola_piano()
 
-# --- GIRO OGGI ---
+# --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro di Oggi ({st.session_state.start_city})")
     idx_g = datetime.now().weekday()
@@ -145,7 +133,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         if t.get('mail'): a[2].link_button("📧", f"mailto:{t['mail']}")
                         if a[3].button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
-                        
                         if not is_vis:
                             with st.popover("📝 Report", use_container_width=True):
                                 with st.form(f"f_{t['nome cliente']}"):
@@ -154,48 +141,55 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                                     if st.form_submit_button("Salva nel Cloud"):
                                         idx_m = st.session_state.df_master[st.session_state.df_master['nome cliente'] == t['nome cliente']].index[0]
                                         st.session_state.df_master.at[idx_m, 'ultima visita'] = pd.to_datetime(datetime.now().date())
-                                        if save_to_gsheets(st.session_state.df_master):
-                                            st.rerun()
+                                        if save_to_gsheets(st.session_state.df_master): st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita programmata.")
 
-# --- ANAGRAFICA ---
+# --- TAB: AGENDA 8 SETTIMANE (REINTEGRATA) ---
+elif st.session_state.active_tab == "📅 Agenda 8 Sett":
+    st.header("📅 Programmazione Prossime 8 Settimane")
+    settimana_sel = st.selectbox("Seleziona Settimana", list(agenda.keys()))
+    giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+    cols = st.columns(5)
+    for i, g_nome in enumerate(giorni):
+        with cols[i]:
+            st.markdown(f"### {g_nome}")
+            dt_visual = (lun_base + timedelta(weeks=int(settimana_sel.split()[1])-1, days=i)).strftime("%d/%m")
+            st.caption(dt_visual)
+            for tappa in agenda[settimana_sel][i]:
+                with st.container(border=True):
+                    st.write(f"**{tappa['ora_arrivo']}**")
+                    st.write(tappa['nome cliente'])
+                    if st.button("👤", key=f"ag_{settimana_sel}_{i}_{tappa['nome cliente']}"):
+                        st.session_state.cliente_selezionato = tappa['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
+
+# --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Cliente")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
     idx_p = nomi.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in nomi else 0
     scelto = st.selectbox("Cerca cliente:", nomi, index=idx_p)
-    
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
-        
         with st.form("edit"):
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
             ui = c1.text_input("Indirizzo", d.get('indirizzo', ''))
-            ur = c1.text_input("Referente", d.get('referente', ''))
             uf = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
-            
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
             um = c2.text_input("Mail", d.get('mail',''))
-            uct = c2.text_input("Contatto Diretto", d.get('contatto', ''))
             uno = st.text_area("Note Cliente", d.get('note', ''))
-            
             if st.form_submit_button("💾 Salva e Sincronizza Cloud"):
                 st.session_state.df_master.at[idx, 'nome cliente'] = un
                 st.session_state.df_master.at[idx, 'indirizzo'] = ui
-                st.session_state.df_master.at[idx, 'referente'] = ur
                 st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
                 st.session_state.df_master.at[idx, 'cellulare'] = uc
                 st.session_state.df_master.at[idx, 'mail'] = um
-                st.session_state.df_master.at[idx, 'contatto'] = uct
                 st.session_state.df_master.at[idx, 'note'] = uno
-                if save_to_gsheets(st.session_state.df_master):
-                    st.success("Sincronizzato!")
-                    st.rerun()
+                if save_to_gsheets(st.session_state.df_master): st.success("Sincronizzato!"); st.rerun()
 
-# --- NUOVO CLIENTE ---
+# --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Nuovo Cliente")
     with st.form("new"):
@@ -203,27 +197,46 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         ni = st.text_input("Indirizzo")
         if st.form_submit_button("✅ Aggiungi al Cloud"):
             if nn:
-                nuovo = {
-                    'nome cliente': nn, 'indirizzo': ni, 'visitare': 'SI', 
-                    'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'),
-                    'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon
-                }
+                nuovo = {'nome cliente': nn, 'indirizzo': ni, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'), 'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon}
                 st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                if save_to_gsheets(st.session_state.df_master):
-                    st.success("Cliente aggiunto!")
-                    st.rerun()
+                if save_to_gsheets(st.session_state.df_master): st.success("Cliente aggiunto!"); st.rerun()
 
-# --- PARAMETRI ---
+# --- TAB: PARAMETRI (REINTEGRATA) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
-    nc = st.text_input("Città di Partenza:", st.session_state.start_city)
+    
+    # Geolocalizzazione
+    st.subheader("📍 Posizione Attuale")
+    if st.button("🎯 Rileva mia posizione GPS"):
+        pos = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((position) => { return position.coords; })', target_id='v1')
+        if pos:
+            st.session_state.start_lat, st.session_state.start_lon = pos['latitude'], pos['longitude']
+            st.session_state.start_city = "Posizione GPS"
+            st.success(f"Coordinate aggiornate: {st.session_state.start_lat}, {st.session_state.start_lon}")
+    
+    nc = st.text_input("Oppure scrivi Città di Partenza:", st.session_state.start_city)
     if nc != st.session_state.start_city:
         co = get_coords(nc)
         if co:
             st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
             st.rerun()
-    st.session_state.durata_v = st.slider("Minuti per tappa", 15, 120, st.session_state.durata_v)
+
+    st.divider()
+    st.subheader("⏰ Orari Lavoro")
+    c_ora1, c_ora2 = st.columns(2)
+    st.session_state.h_inizio = c_ora1.time_input("Inizio Giornata", st.session_state.h_inizio)
+    st.session_state.h_fine = c_ora2.time_input("Fine Giornata", st.session_state.h_fine)
+    st.session_state.durata_v = st.slider("Minuti per ogni visita", 15, 120, st.session_state.durata_v)
     
+    st.divider()
+    st.subheader("🔄 Sposta Giorno")
+    c_s1, c_s2 = st.columns(2)
+    d_da = c_s1.date_input("Sposta giorno:", datetime.now())
+    d_a = c_s2.date_input("Al giorno:", datetime.now() + timedelta(days=1))
+    if st.button("Esegui Scambio"):
+        st.session_state.spostamenti[d_da], st.session_state.spostamenti[d_a] = d_a, d_da
+        st.success("Giro scambiato correttamente!")
+
     st.divider()
     st.subheader("📊 Esportazione")
     def to_excel(df):
@@ -231,7 +244,6 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         return output.getvalue()
-    
     st.download_button("📥 Scarica Database (Excel)", to_excel(st.session_state.df_master), "database_clienti.xlsx")
     
     if st.button("🔄 Forza Ricaricamento dal Cloud"):
