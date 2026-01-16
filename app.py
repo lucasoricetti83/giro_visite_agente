@@ -3,43 +3,51 @@ import pandas as pd
 from datetime import datetime
 
 st.set_page_config(page_title="Gestione Clienti Live", layout="wide")
-st.title("🚗 Seleziona i Clienti da Visitare")
+st.title("🚗 Il Mio Giro Visite")
 
+# Link del foglio Google in formato CSV
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv"
 
-@st.cache_data(ttl=600) # Ricarica i dati ogni 10 minuti
-def get_data(url):
+@st.cache_data(ttl=60) # Ricarica i dati ogni minuto
+def get_clean_data(url):
     df = pd.read_csv(url)
+    # Puliamo i nomi delle colonne (tutto minuscolo e senza spazi ai lati)
     df.columns = df.columns.str.strip().str.lower()
     
-    # PULIZIA NUMERICA (Risolve l'errore str / float)
-    for col in ['latitudine', 'longitudine', 'frequenza (giorni)']:
-        if col in df.columns:
-            # Rimuove spazi, cambia virgole in punti e forza a numero
-            df[col] = df[col].astype(str).str.replace(',', '.').str.strip()
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+    # --- PULIZIA NUMERICA PROFONDA ---
+    # Queste sono le colonne che DEVONO essere numeri
+    cols_numeriche = ['latitudine', 'longitudine', 'frequenza (giorni)']
     
-    # Pulizia Date
+    for col in cols_numeriche:
+        if col in df.columns:
+            # 1. Trasforma tutto in stringa
+            # 2. Sostituisce la virgola con il punto
+            # 3. Trasforma in numero (se non riesce, mette NaN)
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.').str.strip(), errors='coerce')
+    
+    # --- PULIZIA DATE ---
     df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
+    
+    # Rimuoviamo righe dove mancano dati vitali (nome o coordinate)
+    df = df.dropna(subset=['nome cliente', 'latitudine', 'longitudine'])
     return df
 
 try:
-    df_raw = get_data(URL_FOGLIO)
+    df_raw = get_clean_data(URL_FOGLIO)
     
-    # Creazione colonna selezione se non esiste nel foglio
+    # Gestione colonna selezione
     if 'visitare' not in df_raw.columns:
         df_raw['visitare'] = "NO"
-    df_raw['vai'] = df_raw['visitare'].astype(str).str.upper() == 'SI'
+    
+    # Creiamo la checkbox basandoci sul testo "SI"
+    df_raw['vai'] = df_raw['visitare'].astype(str).str.upper().str.strip() == 'SI'
 
-    # Rimuoviamo righe totalmente vuote o senza coordinate per la mappa
-    df_pulito = df_raw.dropna(subset=['latitudine', 'longitudine', 'nome cliente']).copy()
+    st.write("### 📝 Elenco Clienti")
+    st.info("Seleziona chi vuoi visitare cliccando su 'VAI'")
 
-    st.write("### 📝 Lista Completa Clienti")
-    st.info("Usa la colonna 'VAI' per selezionare i clienti e vederli sulla mappa.")
-
-    # EDITOR DI DATI
+    # EDITOR DI DATI (Tabella interattiva)
     edited_df = st.data_editor(
-        df_pulito[['vai', 'nome cliente', 'indirizzo', 'ultima visita', 'frequenza (giorni)']],
+        df_raw[['vai', 'nome cliente', 'indirizzo', 'ultima visita', 'frequenza (giorni)']],
         column_config={
             "vai": st.column_config.CheckboxColumn("VAI", default=False),
             "ultima visita": st.column_config.DateColumn("Ultima Visita", format="DD/MM/YYYY"),
@@ -49,32 +57,34 @@ try:
         use_container_width=True
     )
 
-    # FILTRO SELEZIONATI
-    nomi_selezionati = edited_df[edited_df['vai'] == True]['nome cliente'].tolist()
-    clienti_per_giro = df_pulito[df_pulito['nome cliente'].isin(nomi_selezionati)].copy()
+    # Filtriamo i selezionati
+    nomi_scelti = edited_df[edited_df['vai'] == True]['nome cliente'].tolist()
+    clienti_per_giro = df_raw[df_raw['nome cliente'].isin(nomi_scelti)].copy()
 
     st.divider()
 
     if not clienti_per_giro.empty:
-        # Ridenominazione per st.map
+        # Prepariamo i dati per la mappa (rinominando per Streamlit)
         mappa_df = clienti_per_giro.rename(columns={'latitudine': 'latitude', 'longitudine': 'longitude'})
         
         col1, col2 = st.columns([1, 2])
+        
         with col1:
-            st.write("### 📋 Riepilogo Selezione")
+            st.write("### 📋 Destinazioni Selezionate")
             for _, row in clienti_per_giro.iterrows():
-                with st.container(border=True):
-                    st.write(f"**{row['nome cliente']}**")
-                    # Link diretto a Google Maps
-                    url_maps = f"https://www.google.com/maps/search/?api=1&query={row['latitudine']},{row['longitudine']}"
-                    st.link_button("🚗 Naviga", url_maps)
+                with st.expander(f"📍 {row['nome cliente']}"):
+                    st.write(f"🏠 {row['indirizzo']}")
+                    # LINK GOOGLE MAPS CORRETTO
+                    url_google = f"https://www.google.com/maps/search/?api=1&query={row['latitudine']},{row['longitudine']}"
+                    st.link_button("🚗 Apri Navigatore", url_google, use_container_width=True)
         
         with col2:
-            st.write("### 📍 Mappa del Giro")
+            st.write("### 📍 Posizione sulla Mappa")
             st.map(mappa_df[['latitude', 'longitude']])
             
     else:
-        st.warning("Seleziona almeno un cliente dalla tabella sopra cliccando su 'VAI'.")
+        st.warning("👈 Spunta almeno un cliente nella colonna 'VAI' per iniziare.")
 
 except Exception as e:
-    st.error(f"Si è verificato un errore: {e}")
+    st.error(f"Si è verificato un errore nei dati: {e}")
+    st.info("Consiglio: Controlla che nel foglio Google le coordinate siano numeri e non contengano simboli o lettere.")
