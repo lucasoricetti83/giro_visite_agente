@@ -16,6 +16,7 @@ def fetch_data(url):
     try:
         df = pd.read_csv(url, sep=None, engine='python')
         df.columns = df.columns.str.strip().str.lower()
+        # Inizializzazione colonne CRM se mancanti
         colonne_crm = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare']
         for col in colonne_crm:
             if col not in df.columns: df[col] = ""
@@ -38,7 +39,7 @@ if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
-# --- 3. LOGICA CALCOLO 8 SETTIMANE ---
+# --- 3. LOGICA CALCOLO ---
 def calcola_piano_completo():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi = datetime.now()
@@ -72,7 +73,7 @@ if not st.session_state.df_master.empty:
 
     # --- TAB 1: GIRO OGGI ---
     with tabs[0]:
-        st.header(f"📍 Oggi: {datetime.now().strftime('%d/%m/%Y')}")
+        st.header(f"📍 Giro di Oggi")
         idx_g = datetime.now().weekday()
         if idx_g < 5:
             tappe = agenda["Settimana 1"][idx_g]
@@ -82,13 +83,13 @@ if not st.session_state.df_master.empty:
                     for t in tappe:
                         with st.container(border=True):
                             st.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
-                            st.caption(f"👤 {t.get('referente','')} | 📞 {t.get('cellulare','')}")
+                            st.caption(f"📞 {t.get('cellulare','')} | 👤 {t.get('referente','')}")
                             cb1, cb2 = st.columns(2)
                             cb1.link_button("🚗 Naviga", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
                             with cb2.popover("📝 Report"):
                                 with st.form(f"r_{t['nome cliente']}"):
                                     es = st.selectbox("Esito", ["Positivo", "Richiamare", "Negativo"], key=f"es_{t['nome cliente']}")
-                                    no = st.text_area("Note", key=f"no_{t['nome cliente']}")
+                                    no = st.text_area("Note visita", key=f"no_{t['nome cliente']}")
                                     if st.form_submit_button("Salva"):
                                         nuovo_r = {'cliente': t['nome cliente'], 'data': datetime.now().strftime("%d/%m/%Y"), 'nota_visita': no, 'esito': es}
                                         st.session_state.df_reports = pd.concat([st.session_state.df_reports, pd.DataFrame([nuovo_r])], ignore_index=True)
@@ -96,7 +97,7 @@ if not st.session_state.df_master.empty:
                                         st.session_state.df_master.at[idx_m, 'ultima visita'] = pd.to_datetime(datetime.now().date())
                                         st.rerun()
                 with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-            else: st.info("Nessuna visita.")
+            else: st.info("Nessuna visita programmata.")
 
     # --- TAB 2: AGENDA 8 SETTIMANE ---
     with tabs[1]:
@@ -119,7 +120,6 @@ if not st.session_state.df_master.empty:
             idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
             d = st.session_state.df_master.loc[idx]
             
-            # 1. Visualizza Storico Report
             st.subheader("📜 Storico Visite")
             reps = st.session_state.df_reports[st.session_state.df_reports['cliente'] == scelto]
             if not reps.empty:
@@ -128,44 +128,66 @@ if not st.session_state.df_master.empty:
             else: st.caption("Nessun report presente.")
             
             st.divider()
-            # 2. Modifica Anagrafica (RIPRISTINATO)
             with st.form("edit_full"):
-                st.subheader("⚙️ Modifica Anagrafica")
+                st.subheader("⚙️ Dati Anagrafici")
                 ca, cb = st.columns(2)
                 with ca:
                     un = st.text_input("Ragione Sociale", d['nome cliente'])
                     ui = st.text_input("Indirizzo", d['indirizzo'])
                     uf = st.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
                     um = st.text_input("Mail", d.get('mail',''))
+                    ut = st.text_input("Telefono Fisso", d.get('telefono',''))
                 with cb:
                     ur = st.text_input("Referente", d.get('referente',''))
-                    up = st.text_input("Posizione", d.get('posizione referente',''))
+                    up = st.text_input("Posizione Referente", d.get('posizione referente',''))
                     uc = st.text_input("Cellulare", d.get('cellulare',''))
                     uv = st.toggle("Abilita nel Giro", value=(d['visitare'] == 'SI'))
-                if st.form_submit_button("💾 Salva Dati"):
-                    st.session_state.df_master.at[idx, 'nome cliente'], st.session_state.df_master.at[idx, 'indirizzo'] = un, ui
-                    st.session_state.df_master.at[idx, 'frequenza (giorni)'], st.session_state.df_master.at[idx, 'mail'] = uf, um
-                    st.session_state.df_master.at[idx, 'referente'], st.session_state.df_master.at[idx, 'posizione referente'] = ur, up
-                    st.session_state.df_master.at[idx, 'cellulare'], st.session_state.df_master.at[idx, 'visitare'] = uc, ('SI' if uv else 'NO')
-                    st.success("Dati aggiornati!"); st.rerun()
+                
+                unot = st.text_area("Note Generali Cliente", d.get('note',''))
+                
+                if st.form_submit_button("💾 Salva Modifiche"):
+                    st.session_state.df_master.at[idx, 'nome cliente'] = un
+                    st.session_state.df_master.at[idx, 'indirizzo'] = ui
+                    st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
+                    st.session_state.df_master.at[idx, 'mail'] = um
+                    st.session_state.df_master.at[idx, 'telefono'] = ut
+                    st.session_state.df_master.at[idx, 'cellulare'] = uc
+                    st.session_state.df_master.at[idx, 'referente'] = ur
+                    st.session_state.df_master.at[idx, 'posizione referente'] = up
+                    st.session_state.df_master.at[idx, 'note'] = unot
+                    st.session_state.df_master.at[idx, 'visitare'] = 'SI' if uv else 'NO'
+                    st.success("Anagrafica aggiornata!"); st.rerun()
+        else: st.warning("Nessun cliente trovato.")
 
     # --- TAB 4: NUOVO CLIENTE ---
     with tabs[3]:
-        st.header("➕ Nuovo Cliente")
+        st.header("➕ Inserisci Nuovo Cliente")
         new_lat, new_lon = 0.0, 0.0
         if st.button("📍 Geocalizza Posizione"):
             gps = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_new')
             if gps: new_lat, new_lon = gps['latitude'], gps['longitude']; st.success("Posizione acquisita!")
         with st.form("new_c"):
-            nn = st.text_input("Ragione Sociale *")
-            ni = st.text_input("Indirizzo")
-            nla = st.number_input("Lat", value=new_lat if new_lat != 0 else st.session_state.start_lat, format="%.6f")
-            nlo = st.number_input("Lon", value=new_lon if new_lon != 0 else st.session_state.start_lon, format="%.6f")
-            if st.form_submit_button("✅ Aggiungi"):
+            c1, c2 = st.columns(2)
+            with c1:
+                nn = st.text_input("Ragione Sociale *")
+                ni = st.text_input("Indirizzo")
+                nf = st.number_input("Frequenza (gg)", value=30)
+                ntel = st.text_input("Telefono Fisso")
+            with c2:
+                ncel = st.text_input("Cellulare")
+                nref = st.text_input("Referente")
+                nla = st.number_input("Lat", value=new_lat if new_lat != 0 else st.session_state.start_lat, format="%.6f")
+                nlo = st.number_input("Lon", value=new_lon if new_lon != 0 else st.session_state.start_lon, format="%.6f")
+            
+            nnote = st.text_area("Note iniziali")
+            
+            if st.form_submit_button("✅ Aggiungi Cliente"):
                 if nn:
-                    r = {'nome cliente': nn, 'indirizzo': ni, 'latitude': nla, 'longitude': nlo, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01')}
+                    r = {'nome cliente': nn, 'indirizzo': ni, 'latitude': nla, 'longitude': nlo, 'visitare': 'SI', 
+                         'frequenza (giorni)': nf, 'ultima visita': pd.Timestamp('2000-01-01'), 
+                         'telefono': ntel, 'cellulare': ncel, 'referente': nref, 'note': nnote}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([r])], ignore_index=True)
-                    st.rerun()
+                    st.success(f"{nn} inserito!"); st.rerun()
 
     # --- TAB 5: PARAMETRI ---
     with tabs[4]:
@@ -173,8 +195,6 @@ if not st.session_state.df_master.empty:
         st.session_state.h_inizio = st.time_input("Inizio", st.session_state.h_inizio)
         st.session_state.h_fine = st.time_input("Fine", st.session_state.h_fine)
         st.session_state.durata_v = st.slider("Minuti Visita", 15, 120, st.session_state.durata_v)
-        st.divider()
-        st.subheader("🔄 Sposta Giorno")
-        d_da = st.date_input("Da:", datetime.now()); d_a = st.date_input("A:", datetime.now() + timedelta(days=1))
-        if st.button("Scambia"): st.session_state.spostamenti[d_da] = d_a; st.session_state.spostamenti[d_a] = d_da; st.rerun()
-        if st.button("Ricarica Database"): del st.session_state.df_master; st.rerun()
+        if st.button("Reset Totale Dati"):
+            st.cache_data.clear()
+            del st.session_state.df_master; st.rerun()
