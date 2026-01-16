@@ -30,7 +30,7 @@ def load_data(url):
     except:
         return pd.DataFrame()
 
-# --- INIZIALIZZAZIONE SESSION STATE PER PARAMETRI ---
+# --- INIZIALIZZAZIONE STATO (Session State) ---
 if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.1924
 if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5797
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
@@ -43,76 +43,130 @@ URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlL
 df_raw = load_data(URL_FOGLIO)
 
 if not df_raw.empty:
-    # --- NAVBAR PRINCIPALE ---
+    # --- CREAZIONE TAB NAVIGAZIONE ---
     tab_oggi, tab_settimana, tab_parametri = st.tabs(["🚀 Giro di Oggi", "📅 Agenda 8 Settimane", "⚙️ Parametri"])
 
-    # --- TAB 3: PARAMETRI (SPOSTATO DALLA SIDEBAR) ---
+    # --- TAB 3: PARAMETRI ---
     with tab_parametri:
-        st.header("⚙️ Configurazione")
-        c1, c2 = st.columns(2)
+        st.header("⚙️ Impostazioni e Sposta Giorno")
+        col_p1, col_p2 = st.columns(2)
         
-        with c1:
-            st.subheader("📍 Posizione e Orari")
-            metodo = st.radio("Metodo partenza:", ["GPS", "Digita Luogo"])
+        with col_p1:
+            st.subheader("📍 Partenza e Orari")
+            metodo = st.radio("Punto di partenza:", ["GPS", "Cerca Luogo"])
             if metodo == "GPS":
-                g = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_p')
+                g = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_update')
                 if g: 
-                    st.session_state.start_lat = g['latitude']
-                    st.session_state.start_lon = g['longitude']
+                    st.session_state.start_lat, st.session_state.start_lon = g['latitude'], g['longitude']
             else:
-                luogo = st.text_input("Città:", "Fermo")
-                if st.button("Aggiorna Luogo"):
-                    try:
-                        loc = Nominatim(user_agent="giro_v4").geocode(luogo)
-                        if loc:
-                            st.session_state.start_lat = loc.latitude
-                            st.session_state.start_lon = loc.longitude
-                    except: st.error("Errore geolocalizzazione")
-            
-            st.session_state.h_inizio = st.time_input("Inizio lavoro", st.session_state.h_inizio)
-            st.session_state.h_fine = st.time_input("Fine lavoro", st.session_state.h_fine)
-            st.session_state.durata_v = st.slider("Durata visita (min)", 15, 120, st.session_state.durata_v)
+                citta = st.text_input("Inserisci Comune:", "Fermo")
+                if st.button("Trova Coordinate"):
+                    loc = Nominatim(user_agent="giro_agente").geocode(citta)
+                    if loc: 
+                        st.session_state.start_lat, st.session_state.start_lon = loc.latitude, loc.longitude
+                        st.success(f"Coordinate aggiornate per {citta}")
 
-        with c2:
-            st.subheader("🔄 Sposta Giro")
-            st.write("Usa questa funzione per scambiare le visite tra due giorni.")
-            data_da = st.date_input("Sposta il giro del giorno:", datetime.now())
-            data_a = st.date_input("Al giorno:", datetime.now() + timedelta(days=1))
-            
-            if st.button("Conferma Scambio Giorno"):
-                st.session_state.spostamenti[data_da] = data_a
-                st.session_state.spostamenti[data_a] = data_da
-                st.success(f"Giro scambiato tra {data_da.strftime('%d/%m')} e {data_a.strftime('%d/%m')}")
-            
-            if st.session_state.spostamenti and st.button("Reset Spostamenti"):
-                st.session_state.spostamenti = {}
-                st.rerun()
+            st.session_state.h_inizio = st.time_input("Inizio Lavoro", st.session_state.h_inizio)
+            st.session_state.h_fine = st.time_input("Fine Lavoro", st.session_state.h_fine)
+            st.session_state.durata_v = st.slider("Durata Visita (min)", 15, 120, st.session_state.durata_v)
 
-    # --- LOGICA CALCOLO (Comune a Tab 1 e 2) ---
-    oggi = datetime.now()
-    lun_corrente = oggi - timedelta(days=oggi.weekday())
+        with col_p2:
+            st.subheader("🔄 Funzione Sposta Giorno")
+            st.write("Scambia le visite tra due date specifiche.")
+            d_da = st.date_input("Giorno da spostare:", datetime.now())
+            d_a = st.date_input("Sposta al giorno:", datetime.now() + timedelta(days=1))
+            
+            if st.button("Conferma Scambio"):
+                st.session_state.spostamenti[d_da] = d_a
+                st.session_state.spostamenti[d_a] = d_da
+                st.toast("Giorno spostato con successo!")
 
-    def genera_agenda_simulata(df, start_dt, n_settimane=8):
-        df_sim = df.copy()
-        agenda = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
+            if st.session_state.spostamenti:
+                st.write("---")
+                if st.button("Reset tutti gli spostamenti"):
+                    st.session_state.spostamenti = {}
+                    st.rerun()
+
+    # --- LOGICA CALCOLO AGENDA (Simulazione) ---
+    def calcola_piano_completo():
+        oggi = datetime.now()
+        lunedi_corrente = oggi - timedelta(days=oggi.weekday())
+        df_sim = df_raw.copy()
+        piano = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
         
-        for s in range(1, n_settimane + 1):
+        for s in range(1, 9):
             for g in range(5):
-                data_attuale = lun_corrente + timedelta(weeks=s-1, days=g)
-                # CONTROLLO SPOSTAMENTO
-                data_logica = st.session_state.spostamenti.get(data_attuale.date(), data_attuale.date())
+                data_attuale = (lunedi_corrente + timedelta(weeks=s-1, days=g)).date()
+                # Verifica se il giorno è stato scambiato logicamente
+                data_da_usare = st.session_state.spostamenti.get(data_attuale, data_attuale)
                 
-                df_sim['g_pass'] = (pd.to_datetime(data_logica) - df_sim['ultima visita']).dt.days
-                urg = df_sim[df_sim['g_pass'] >= df_sim['frequenza (giorni)']].to_dict('records')
+                df_sim['giorni_p'] = (pd.to_datetime(data_da_usare) - df_sim['ultima visita']).dt.days
+                urg = df_sim[df_sim['giorni_p'] >= df_sim['frequenza (giorni)']].to_dict('records')
                 
-                o_sim, p_sim = datetime.combine(data_attuale, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
+                ora_s, pos_s = datetime.combine(data_attuale, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
+                limite_s = datetime.combine(data_attuale, st.session_state.h_fine)
+                
                 while urg:
-                    px = min(urg, key=lambda x: haversine(p_sim[0], p_sim[1], x['latitude'], x['longitude']))
-                    dist = haversine(p_sim[0], p_sim[1], px['latitude'], px['longitude'])
-                    arr = o_sim + timedelta(minutes=(dist/50)*60)
-                    part = arr + timedelta(minutes=st.session_state.durata_v)
+                    p = min(urg, key=lambda x: haversine(pos_s[0], pos_s[1], x['latitude'], x['longitude']))
+                    dist = haversine(pos_s[0], pos_s[1], p['latitude'], p['longitude'])
+                    arrivo = ora_s + timedelta(minutes=(dist/50)*60)
+                    fine = arrivo + timedelta(minutes=st.session_state.durata_v)
                     
-                    if part <= datetime.combine(data_attuale, st.session_state.h_fine):
-                        info = px.copy(); info['ora'] = arr.strftime("%H:%M")
-                        agenda[f"Settimana {s}"][g].append(info)
-                        df_sim.loc[df_sim['nome cliente'] == px['nome
+                    if fine <= limite_s:
+                        info = p.copy()
+                        info['ora_arrivo'] = arrivo.strftime("%H:%M")
+                        piano[f"Settimana {s}"][g].append(info)
+                        # Aggiornamento simulato riga 118 (fissata)
+                        df_sim.loc[df_sim['nome cliente'] == p['nome cliente'], 'ultima visita'] = pd.to_datetime(data_da_usare)
+                        ora_s, pos_s = fine, (p['latitude'], p['longitude'])
+                        urg.remove(p)
+                    else: break
+        return piano, lunedi_corrente
+
+    agenda_totale, lun_ref = calcola_piano_completo()
+
+    # --- TAB 1: GIRO DI OGGI ---
+    with tab_oggi:
+        oggi_dt = datetime.now()
+        st.header(f"📍 Oggi: {oggi_dt.strftime('%d/%m/%Y')}")
+        idx_g = oggi_dt.weekday()
+        
+        if idx_g < 5:
+            tappe_oggi = agenda_totale["Settimana 1"][idx_g]
+            if tappe_oggi:
+                col_lista, col_mappa = st.columns([1, 2])
+                with col_lista:
+                    for t in tappe_oggi:
+                        with st.container(border=True):
+                            st.write(f"🕒 **{t['ora_arrivo']}**")
+                            st.write(f"**{t['nome cliente']}**")
+                            st.link_button("🚗 Naviga", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
+                with col_mappa:
+                    st.map(pd.DataFrame(tappe_oggi).rename(columns={'latitude':'lat','longitude':'lon'}))
+            else: st.info("Nessuna visita per oggi.")
+        else: st.write("Weekend: controlla l'agenda per Lunedì!")
+
+    # --- TAB 2: AGENDA 8 SETTIMANE (5 COLONNE) ---
+    with tab_settimana:
+        sett_scelta = st.selectbox("Seleziona Settimana:", [f"Settimana {i}" for i in range(1, 9)])
+        nomi_g = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+        cols_w = st.columns(5)
+        
+        for i, col_u in enumerate(cols_w):
+            with col_u:
+                data_g = (lun_ref + timedelta(weeks=int(sett_scelta.split()[-1])-1, days=i)).date()
+                # Verifica scambio
+                if data_g in st.session_state.spostamenti:
+                    st.warning(f"🔄 {nomi_g[i]}")
+                else:
+                    st.subheader(nomi_g[i])
+                st.caption(data_g.strftime("%d/%m"))
+                st.divider()
+                
+                for vis in agenda_totale[sett_scelta][i]:
+                    with st.container(border=True):
+                        st.caption(vis['ora_arrivo'])
+                        st.markdown(f"**{vis['nome cliente']}**")
+
+else:
+    st.error("Errore nel caricamento del Foglio Google.")
