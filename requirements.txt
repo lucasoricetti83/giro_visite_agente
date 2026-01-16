@@ -4,3 +4,5 @@ geopy
 streamlit-js-eval
 openpyxl
 xlsxwriter
+st-gsheets-connection
+google-auth
