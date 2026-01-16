@@ -2,89 +2,91 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Gestione Clienti Live", layout="wide")
+st.set_page_config(page_title="Gestione Visite Agente", layout="wide")
 st.title("🚗 Il Mio Giro Visite")
 
-# Link del foglio Google in formato CSV
+# Link del tuo foglio Google
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/export?format=csv"
 
-@st.cache_data(ttl=60) # Ricarica i dati ogni minuto
+@st.cache_data(ttl=60)
 def get_clean_data(url):
     df = pd.read_csv(url)
-    # Puliamo i nomi delle colonne (tutto minuscolo e senza spazi ai lati)
     df.columns = df.columns.str.strip().str.lower()
     
-    # --- PULIZIA NUMERICA PROFONDA ---
-    # Queste sono le colonne che DEVONO essere numeri
-    cols_numeriche = ['latitudine', 'longitudine', 'frequenza (giorni)']
-    
-    for col in cols_numeriche:
+    # --- SUPER PULIZIA NUMERICA ---
+    # Forza latitudine, longitudine e frequenza a essere numeri puri
+    for col in ['latitudine', 'longitudine', 'frequenza (giorni)']:
         if col in df.columns:
-            # 1. Trasforma tutto in stringa
-            # 2. Sostituisce la virgola con il punto
-            # 3. Trasforma in numero (se non riesce, mette NaN)
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.').str.strip(), errors='coerce')
+            # Rimuove tutto ciò che non è numero, punto o meno
+            df[col] = df[col].astype(str).str.replace(',', '.').str.replace(r'[^0-9.-]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    # --- PULIZIA DATE ---
+    # --- GESTIONE DATE ---
     df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
-    
-    # Rimuoviamo righe dove mancano dati vitali (nome o coordinate)
-    df = df.dropna(subset=['nome cliente', 'latitudine', 'longitudine'])
     return df
 
 try:
     df_raw = get_clean_data(URL_FOGLIO)
     
-    # Gestione colonna selezione
+    # Prepariamo la colonna "VAI" (checkbox)
     if 'visitare' not in df_raw.columns:
         df_raw['visitare'] = "NO"
-    
-    # Creiamo la checkbox basandoci sul testo "SI"
     df_raw['vai'] = df_raw['visitare'].astype(str).str.upper().str.strip() == 'SI'
 
-    st.write("### 📝 Elenco Clienti")
-    st.info("Seleziona chi vuoi visitare cliccando su 'VAI'")
+    # Rimuoviamo righe inutilizzabili (senza nome o senza coordinate)
+    df_pulito = df_raw.dropna(subset=['nome cliente', 'latitudine', 'longitudine']).copy()
 
-    # EDITOR DI DATI (Tabella interattiva)
+    st.write("### 📋 Elenco Clienti")
+    st.info("Spunta la colonna **VAI** per selezionare i clienti che vuoi visitare oggi.")
+
+    # TABELLA INTERATTIVA
+    # Mostriamo solo le colonne utili per la scelta
+    df_visualizzazione = df_pulito[['vai', 'nome cliente', 'indirizzo', 'ultima visita', 'frequenza (giorni)']]
+    
     edited_df = st.data_editor(
-        df_raw[['vai', 'nome cliente', 'indirizzo', 'ultima visita', 'frequenza (giorni)']],
+        df_visualizzazione,
         column_config={
             "vai": st.column_config.CheckboxColumn("VAI", default=False),
             "ultima visita": st.column_config.DateColumn("Ultima Visita", format="DD/MM/YYYY"),
+            "frequenza (giorni)": "Frequenza",
+            "nome cliente": "Cliente",
+            "indirizzo": "Indirizzo"
         },
         disabled=["nome cliente", "indirizzo", "ultima visita", "frequenza (giorni)"],
         hide_index=True,
         use_container_width=True
     )
 
-    # Filtriamo i selezionati
-    nomi_scelti = edited_df[edited_df['vai'] == True]['nome cliente'].tolist()
-    clienti_per_giro = df_raw[df_raw['nome cliente'].isin(nomi_scelti)].copy()
+    # Filtriamo i selezionati dall'utente nell'app
+    nomi_selezionati = edited_df[edited_df['vai'] == True]['nome cliente'].tolist()
+    clienti_per_giro = df_pulito[df_pulito['nome cliente'].isin(nomi_selezionati)].copy()
 
     st.divider()
 
     if not clienti_per_giro.empty:
-        # Prepariamo i dati per la mappa (rinominando per Streamlit)
+        # Prepariamo i nomi colonne per la mappa di Streamlit (lat/lon)
         mappa_df = clienti_per_giro.rename(columns={'latitudine': 'latitude', 'longitudine': 'longitude'})
         
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            st.write("### 📋 Destinazioni Selezionate")
+            st.write("### 🚗 Navigazione")
             for _, row in clienti_per_giro.iterrows():
-                with st.expander(f"📍 {row['nome cliente']}"):
-                    st.write(f"🏠 {row['indirizzo']}")
-                    # LINK GOOGLE MAPS CORRETTO
-                    url_google = f"https://www.google.com/maps/search/?api=1&query={row['latitudine']},{row['longitudine']}"
-                    st.link_button("🚗 Apri Navigatore", url_google, use_container_width=True)
+                # Box per ogni cliente selezionato
+                with st.container(border=True):
+                    st.markdown(f"**{row['nome cliente']}**")
+                    st.caption(f"📍 {row['indirizzo']}")
+                    # Link ottimizzato per Google Maps
+                    google_maps_url = f"https://www.google.com/maps/search/?api=1&query={row['latitudine']},{row['longitudine']}"
+                    st.link_button(f"Apri Navigatore", google_maps_url, use_container_width=True)
         
         with col2:
-            st.write("### 📍 Posizione sulla Mappa")
-            st.map(mappa_df[['latitude', 'longitude']])
+            st.write("### 📍 Mappa")
+            st.map(mappa_df[['latitude', 'longitude']], color="#FF0000")
             
     else:
-        st.warning("👈 Spunta almeno un cliente nella colonna 'VAI' per iniziare.")
+        st.warning("Seleziona uno o più clienti dalla tabella sopra per vederli sulla mappa.")
 
 except Exception as e:
-    st.error(f"Si è verificato un errore nei dati: {e}")
-    st.info("Consiglio: Controlla che nel foglio Google le coordinate siano numeri e non contengano simboli o lettere.")
+    st.error(f"Errore nel caricamento: {e}")
+    st.info("💡 Controlla che il tuo Foglio Google non abbia celle con errori (#N/A) o scritte strane nelle colonne numeriche.")
