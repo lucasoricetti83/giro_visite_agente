@@ -14,6 +14,7 @@ URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlL
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# --- FUNZIONI DI SALVATAGGIO CLOUD ---
 def save_to_gsheets(df):
     try:
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo']]
@@ -22,6 +23,16 @@ def save_to_gsheets(df):
         return True
     except Exception as e:
         st.error(f"Errore Cloud: {e}")
+        return False
+
+def save_config_cloud(city, lat, lon):
+    try:
+        df_conf = pd.DataFrame([{'citta': city, 'lat': lat, 'lon': lon}])
+        conn.update(spreadsheet=URL_FOGLIO, worksheet="Config", data=df_conf)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Errore salvataggio Config: {e}")
         return False
 
 # --- 2. UTILS ---
@@ -54,16 +65,30 @@ def fetch_data():
         st.error(f"Errore fetch: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=0)
+def fetch_config():
+    try:
+        df_conf = conn.read(spreadsheet=URL_FOGLIO, worksheet="Config")
+        return {
+            'city': str(df_conf.iloc[0]['citta']),
+            'lat': float(df_conf.iloc[0]['lat']),
+            'lon': float(df_conf.iloc[0]['lon'])
+        }
+    except:
+        return {'city': "Ancona", 'lat': 43.6158, 'lon': 13.5189}
+
 # --- 3. STATO DELL'APP ---
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
-if 'df_reports' not in st.session_state: st.session_state.df_reports = pd.DataFrame(columns=['cliente', 'data', 'nota_visita', 'esito'])
 
-# Parametri Default (se non esistono)
-if 'start_city' not in st.session_state: st.session_state.start_city = "Ancona"
-if 'start_lat' not in st.session_state: st.session_state.start_lat = 43.6158
-if 'start_lon' not in st.session_state: st.session_state.start_lon = 13.5189
+# Carica configurazione permanente dal Cloud
+conf_cloud = fetch_config()
+
+if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
+if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
+if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
+
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
@@ -115,7 +140,7 @@ agenda, lun_base = calcola_piano()
 
 # --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
-    st.header(f"📍 Giro di Oggi ({st.session_state.start_city})")
+    st.header(f"📍 Partenza da: {st.session_state.start_city}")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
         tappe = agenda["Settimana 1"][idx_g]
@@ -145,9 +170,9 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita programmata.")
 
-# --- TAB: AGENDA 8 SETTIMANE (REINTEGRATA) ---
+# --- TAB: AGENDA 8 SETTIMANE ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
-    st.header("📅 Programmazione Prossime 8 Settimane")
+    st.header("📅 Programmazione 8 Settimane")
     settimana_sel = st.selectbox("Seleziona Settimana", list(agenda.keys()))
     giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
     cols = st.columns(5)
@@ -169,37 +194,28 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
     idx_p = nomi.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in nomi else 0
     scelto = st.selectbox("Cerca cliente:", nomi, index=idx_p)
-    
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
-        
         with st.form("edit"):
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
             ui = c1.text_input("Indirizzo", d.get('indirizzo', ''))
             uf = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
-            
-            # --- NUOVO COMPONENTE: ATTIVA/DISATTIVA ---
-            stato_attuale = "SI" if str(d.get('visitare', 'SI')).upper() == "SI" else "NO"
-            uv = c1.selectbox("Includere nel Giro Visite?", ["SI", "NO"], index=0 if stato_attuale == "SI" else 1)
-            
+            stato_v = "SI" if str(d.get('visitare', 'SI')).upper() == "SI" else "NO"
+            uv = c1.selectbox("Includere nel Giro?", ["SI", "NO"], index=0 if stato_v == "SI" else 1)
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
             um = c2.text_input("Mail", d.get('mail',''))
             uno = st.text_area("Note Cliente", d.get('note', ''))
-            
             if st.form_submit_button("💾 Salva e Sincronizza Cloud"):
                 st.session_state.df_master.at[idx, 'nome cliente'] = un
                 st.session_state.df_master.at[idx, 'indirizzo'] = ui
                 st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
-                st.session_state.df_master.at[idx, 'visitare'] = uv  # <--- Salva la scelta
+                st.session_state.df_master.at[idx, 'visitare'] = uv
                 st.session_state.df_master.at[idx, 'cellulare'] = uc
                 st.session_state.df_master.at[idx, 'mail'] = um
                 st.session_state.df_master.at[idx, 'note'] = uno
-                
-                if save_to_gsheets(st.session_state.df_master):
-                    st.success(f"Dati di {un} aggiornati nel Cloud (Incluso: {uv})")
-                    st.rerun()
+                if save_to_gsheets(st.session_state.df_master): st.success("Sincronizzato!"); st.rerun()
 
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
@@ -207,49 +223,42 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new"):
         nn = st.text_input("Ragione Sociale *")
         ni = st.text_input("Indirizzo")
-        nv = st.selectbox("Includere subito nei giri visita?", ["SI", "NO"])
+        nv = st.selectbox("Includere nel giro?", ["SI", "NO"])
         if st.form_submit_button("✅ Aggiungi al Cloud"):
             if nn:
-                nuovo = {
-                    'nome cliente': nn, 
-                    'indirizzo': ni, 
-                    'visitare': nv, # <--- Prende il valore dal selettore
-                    'frequenza (giorni)': 30, 
-                    'ultima visita': pd.Timestamp('2000-01-01'),
-                    'latitude': st.session_state.start_lat, 
-                    'longitude': st.session_state.start_lon
-                }
+                nuovo = {'nome cliente': nn, 'indirizzo': ni, 'visitare': nv, 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'), 'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon}
                 st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                if save_to_gsheets(st.session_state.df_master):
-                    st.success("Cliente aggiunto correttamente!")
-                    st.rerun()
+                if save_to_gsheets(st.session_state.df_master): st.success("Cliente aggiunto!"); st.rerun()
 
-# --- TAB: PARAMETRI (REINTEGRATA) ---
+# --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     
-    # Geolocalizzazione
-    st.subheader("📍 Posizione Attuale")
-    if st.button("🎯 Rileva mia posizione GPS"):
-        pos = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((position) => { return position.coords; })', target_id='v1')
+    st.subheader("📍 Posizione di Partenza")
+    if st.button("🎯 Usa mia posizione GPS attuale"):
+        pos = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((position) => { return position.coords; })', target_id='gps_v2')
         if pos:
-            st.session_state.start_lat, st.session_state.start_lon = pos['latitude'], pos['longitude']
-            st.session_state.start_city = "Posizione GPS"
-            st.success(f"Coordinate aggiornate: {st.session_state.start_lat}, {st.session_state.start_lon}")
+            lat, lon = pos['latitude'], pos['longitude']
+            if save_config_cloud("Posizione GPS", lat, lon):
+                st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = lat, lon, "Posizione GPS"
+                st.success("📍 Posizione GPS salvata permanentemente!")
+                st.rerun()
     
-    nc = st.text_input("Oppure scrivi Città di Partenza:", st.session_state.start_city)
-    if nc != st.session_state.start_city:
+    nc = st.text_input("Oppure scrivi Città:", st.session_state.start_city)
+    if nc != st.session_state.start_city and nc != "Posizione GPS":
         co = get_coords(nc)
         if co:
-            st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
-            st.rerun()
+            if save_config_cloud(nc, co[0], co[1]):
+                st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
+                st.success(f"📍 Partenza fissata a {nc} per le prossime sessioni!")
+                st.rerun()
 
     st.divider()
     st.subheader("⏰ Orari Lavoro")
-    c_ora1, c_ora2 = st.columns(2)
-    st.session_state.h_inizio = c_ora1.time_input("Inizio Giornata", st.session_state.h_inizio)
-    st.session_state.h_fine = c_ora2.time_input("Fine Giornata", st.session_state.h_fine)
-    st.session_state.durata_v = st.slider("Minuti per ogni visita", 15, 120, st.session_state.durata_v)
+    c1, c2 = st.columns(2)
+    st.session_state.h_inizio = c1.time_input("Inizio Giornata", st.session_state.h_inizio)
+    st.session_state.h_fine = c2.time_input("Fine Giornata", st.session_state.h_fine)
+    st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
     
     st.divider()
     st.subheader("🔄 Sposta Giorno")
@@ -258,18 +267,9 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     d_a = c_s2.date_input("Al giorno:", datetime.now() + timedelta(days=1))
     if st.button("Esegui Scambio"):
         st.session_state.spostamenti[d_da], st.session_state.spostamenti[d_a] = d_a, d_da
-        st.success("Giro scambiato correttamente!")
+        st.success("Giro scambiato!")
 
     st.divider()
-    st.subheader("📊 Esportazione")
-    def to_excel(df):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        return output.getvalue()
-    st.download_button("📥 Scarica Database (Excel)", to_excel(st.session_state.df_master), "database_clienti.xlsx")
-    
-    if st.button("🔄 Forza Ricaricamento dal Cloud"):
+    if st.button("🔄 Forza Ricaricamento Totale dal Cloud"):
         st.cache_data.clear()
-        del st.session_state.df_master
         st.rerun()
