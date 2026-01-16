@@ -1,5 +1,6 @@
 streamlit
 pandas
-numpy
-streamlit-js-eval
 geopy
+streamlit-js-eval
+openpyxl
+xlsxwriter
