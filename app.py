@@ -6,7 +6,7 @@ from geopy.geocoders import Nominatim
 from streamlit_js_eval import streamlit_js_eval
 
 # --- 1. CONFIGURAZIONE E FUNZIONI ---
-st.set_page_config(page_title="Giro Visite & CRM", layout="wide")
+st.set_page_config(page_title="Giro Visite & CRM Pro", layout="wide")
 
 def haversine(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
@@ -18,8 +18,17 @@ def fetch_data(url):
     try:
         df = pd.read_csv(url, sep=None, engine='python')
         df.columns = df.columns.str.strip().str.lower()
+        # Pulizia numeri
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
-            if c in df.columns: df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
+            if c in df.columns: 
+                df[c] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce') if 'col' in locals() else pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
+        
+        # Gestione colonna 'visitare' (SI/NO)
+        if 'visitare' not in df.columns:
+            df['visitare'] = 'SI'
+        df['visitare'] = df['visitare'].fillna('SI').astype(str).str.upper()
+        
+        # Gestione date vuote (non sono più un vincolo)
         df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
         return df.dropna(subset=['nome cliente', 'latitude', 'longitude'])
     except: return pd.DataFrame()
@@ -36,16 +45,26 @@ if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
 # --- 3. LOGICA DI CALCOLO ---
 def genera_agenda():
+    if st.session_state.df_master.empty: return {}, datetime.now()
     oggi = datetime.now()
     lun_ref = oggi - timedelta(days=oggi.weekday())
     df_s = st.session_state.df_master.copy()
     piano = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
+    
     for s in range(1, 9):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
             dt_l = st.session_state.spostamenti.get(dt_c, dt_c)
-            df_s['g_p'] = (pd.to_datetime(dt_l) - df_s['ultima visita']).dt.days
-            urg = df_s[df_s['g_p'] >= df_s['frequenza (giorni)']].to_dict('records')
+            
+            # Calcolo giorni passati gestendo i valori vuoti (NaT)
+            df_s['g_p'] = (pd.to_datetime(dt_l) - df_s['ultima visita']).dt.days.fillna(999)
+            
+            # FILTRO CRUCIALE: Solo chi ha 'visitare' == SI e frequenza scaduta
+            urg = df_s[
+                (df_s['visitare'] == 'SI') & 
+                (df_s['g_p'] >= df_s['frequenza (giorni)'])
+            ].to_dict('records')
+            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             while urg:
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
@@ -78,52 +97,63 @@ if not st.session_state.df_master.empty:
                             st.write(f"🕒 **{t['ora']}** - {t['nome cliente']}")
                             st.link_button("🚗 Naviga", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
                 with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-            else: st.info("Nessuna visita programmata.")
+            else: st.info("Nessun cliente programmato per oggi (o tutti disabilitati).")
         else: st.write("Weekend!")
 
     with t2:
-        st.header("Programmazione Settimanale")
         s_sel = st.selectbox("Scegli Settimana:", [f"Settimana {i}" for i in range(1, 9)])
         cols = st.columns(5)
-        giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+        giorni_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
         for i, col in enumerate(cols):
             with col:
                 dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
-                st.subheader(giorni[i]); st.caption(dt_g.strftime("%d/%m"))
+                st.subheader(giorni_nomi[i]); st.caption(dt_g.strftime("%d/%m"))
                 for v in piano[s_sel][i]:
                     with st.container(border=True):
                         st.caption(v['ora']); st.write(f"**{v['nome cliente']}**")
 
     with t3:
         st.header("👤 Scheda Cliente")
-        cerca = st.text_input("🔍 Cerca per nome o città:", "").lower()
+        cerca = st.text_input("🔍 Cerca cliente:", "").lower()
         lista = [n for n in sorted(st.session_state.df_master['nome cliente'].unique()) if cerca in n.lower()]
+        
         if lista:
             scelto = st.selectbox("Risultati:", lista)
             idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
             d = st.session_state.df_master.loc[idx]
-            with st.form("edit_c"):
+            
+            # Gestione data predefinita per il modulo
+            val_data = d['ultima visita'].date() if pd.notnull(d['ultima visita']) else datetime.now().date()
+            val_visitare = True if d['visitare'] == 'SI' else False
+
+            with st.form("edit_crm"):
                 f1, f2 = st.columns(2)
                 with f1:
-                    un = st.text_input("Nome", d['nome cliente'])
+                    un = st.text_input("Nome Cliente", d['nome cliente'])
                     ui = st.text_input("Indirizzo", d['indirizzo'])
-                    uf = st.number_input("Freq (gg)", value=int(d['frequenza (giorni)']))
+                    uf = st.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
+                    # NUOVO TOGGLE ABILITA/DISABILITA
+                    uv = st.toggle("Includi questo cliente nel Giro Visite", value=val_visitare)
                 with f2:
-                    ula = st.number_input("Lat", value=float(d['latitude']), format="%.6f")
-                    ulo = st.number_input("Lon", value=float(d['longitude']), format="%.6f")
-                    uda = st.date_input("Ultima Visita", d['ultima visita'].date())
-                if st.form_submit_button("💾 Salva Modifiche"):
+                    ula = st.number_input("Latitudine", value=float(d['latitude']), format="%.6f")
+                    ulo = st.number_input("Longitudine", value=float(d['longitude']), format="%.6f")
+                    uda = st.date_input("Ultima Visita (Lascia oggi se mai visitato)", value=val_data)
+                
+                if st.form_submit_button("💾 Salva Modifiche Locale"):
                     st.session_state.df_master.at[idx, 'nome cliente'] = un
                     st.session_state.df_master.at[idx, 'indirizzo'] = ui
                     st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
                     st.session_state.df_master.at[idx, 'latitude'] = ula
                     st.session_state.df_master.at[idx, 'longitude'] = ulo
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(uda)
-                    st.success("Dati aggiornati!"); st.rerun()
+                    st.session_state.df_master.at[idx, 'visitare'] = 'SI' if uv else 'NO'
+                    st.success(f"Dati di {un} aggiornati!")
+                    st.rerun()
         else: st.warning("Nessun cliente trovato.")
 
     with t4:
         st.header("⚙️ Parametri")
+        # GPS, Orari e Scambio Giorni (già presenti e stabili)
         cp1, cp2 = st.columns(2)
         with cp1:
             if st.button("🎯 GPS"):
@@ -131,10 +161,13 @@ if not st.session_state.df_master.empty:
                 if g: st.session_state.start_lat, st.session_state.start_lon = g['latitude'], g['longitude']; st.rerun()
             st.session_state.h_inizio = st.time_input("Inizio", st.session_state.h_inizio)
             st.session_state.h_fine = st.time_input("Fine", st.session_state.h_fine)
-            st.session_state.durata_v = st.slider("Visita (min)", 15, 120, st.session_state.durata_v)
+            st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
         with cp2:
             st.subheader("🔄 Sposta Giorno")
             d_da = st.date_input("Da:", datetime.now()); d_a = st.date_input("A:", datetime.now() + timedelta(days=1))
             if st.button("Scambia"): st.session_state.spostamenti[d_da] = d_a; st.session_state.spostamenti[d_a] = d_da; st.rerun()
-            if st.button("Ricarica Foglio"): del st.session_state.df_master; st.rerun()
-else: st.error("Errore caricamento dati.")
+            if st.button("Ricarica Foglio"): 
+                st.cache_data.clear()
+                del st.session_state.df_master
+                st.rerun()
+else: st.error("Errore: Collega il foglio Google correttamente.")
