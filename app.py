@@ -77,9 +77,7 @@ st.divider()
 
 piano, lun_base = calcola_piano()
 
-# --- 5. LOGICA PAGINE ---
-
-# 🚀 GIRO OGGI
+# --- 🚀 GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro del Giorno")
     idx_g = datetime.now().weekday()
@@ -91,13 +89,28 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                 for t in tappe:
                     with st.container(border=True):
                         st.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
-                        cb1, cb2, cb3 = st.columns(3)
-                        cb1.link_button("🚗 Vai", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}")
-                        if cb2.button("👤 Scheda", key=f"go_{t['nome cliente']}"):
+                        st.caption(f"👤 {t.get('referente','')} | 📞 {t.get('cellulare','')}")
+                        
+                        # AZIONI RAPIDE
+                        col_nav, col_call, col_mail = st.columns(3)
+                        col_nav.link_button("🚗 Vai", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}", use_container_width=True)
+                        
+                        if t.get('cellulare'):
+                            col_call.link_button("📞 Chiama", f"tel:{t['cellulare']}", use_container_width=True)
+                        else: col_call.button("📞 N/D", disabled=True, use_container_width=True)
+                        
+                        if t.get('mail'):
+                            col_mail.link_button("📧 Email", f"mailto:{t['mail']}", use_container_width=True)
+                        else: col_mail.button("📧 N/D", disabled=True, use_container_width=True)
+
+                        # ALTRE AZIONI
+                        cb1, cb2 = st.columns(2)
+                        if cb1.button("👤 Scheda", key=f"go_{t['nome cliente']}", use_container_width=True):
                             st.session_state.cliente_selezionato = t['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
-                        with cb3.popover("📝 Rep"):
+                        
+                        with cb2.popover("📝 Report", use_container_width=True):
                             with st.form(f"f_{t['nome cliente']}"):
                                 es = st.selectbox("Esito", ["Positivo", "Richiamare", "Negativo"])
                                 no = st.text_area("Note")
@@ -110,24 +123,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita programmata.")
 
-# 📅 AGENDA 8 SETTIMANE
-elif st.session_state.active_tab == "📅 Agenda 8 Sett":
-    st.header("Programmazione Strategica")
-    s_sel = st.selectbox("Settimana:", [f"Settimana {i}" for i in range(1, 9)])
-    cols = st.columns(5)
-    for i, col in enumerate(cols):
-        with col:
-            dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
-            st.subheader(dt_g.strftime("%A")); st.caption(dt_g.strftime("%d/%m"))
-            for v in piano[s_sel][i]:
-                with st.container(border=True):
-                    st.write(f"**{v['nome cliente']}**")
-                    if st.button("👤 Scheda", key=f"ag_{v['nome cliente']}_{i}"):
-                        st.session_state.cliente_selezionato = v['nome cliente']
-                        st.session_state.active_tab = "👤 Anagrafica"
-                        st.rerun()
-
-# 👤 ANAGRAFICA (CON TASTO ELIMINA)
+# --- 👤 ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Cliente")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
@@ -138,17 +134,19 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
         
-        # --- ZONA ELIMINAZIONE ---
-        with st.expander("⚠️ Zona Pericolo (Eliminazione)"):
-            st.write(f"Sei sicuro di voler eliminare **{scelto}** dal database?")
-            if st.button(f"Sì, elimina definitivamente {scelto}", type="primary"):
-                st.session_state.df_master = st.session_state.df_master.drop(idx).reset_index(drop=True)
-                st.session_state.cliente_selezionato = None
-                st.success(f"Cliente {scelto} eliminato con successo!")
-                st.session_state.active_tab = "🚀 Giro Oggi"
-                st.rerun()
+        # BARRA AZIONI CONTATTO DIRETTO
+        st.subheader("📞 Azioni Rapide")
+        c_act1, c_act2, c_act3 = st.columns(3)
+        if d.get('cellulare'):
+            c_act1.link_button("📱 Chiama Cellulare", f"tel:{d['cellulare']}", use_container_width=True)
+        if d.get('telefono'):
+            c_act2.link_button("☎️ Chiama Fisso", f"tel:{d['telefono']}", use_container_width=True)
+        if d.get('mail'):
+            c_act3.link_button("📧 Invia Email", f"mailto:{d['mail']}", use_container_width=True)
         
         st.divider()
+        
+        # Storico e Modifica (come prima...)
         st.subheader("📜 Storico Report")
         reps = st.session_state.df_reports[st.session_state.df_reports['cliente'] == scelto]
         if not reps.empty:
@@ -156,14 +154,14 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 with st.expander(f"📅 {r['data']} - {r['esito']}"): st.write(r['nota_visita'])
         
         st.divider()
-        with st.form("edit_full_v3"):
+        with st.form("edit_full_v4"):
             st.subheader("⚙️ Modifica Dati")
             c1, c2 = st.columns(2)
             with c1:
                 un = st.text_input("Ragione Sociale", d['nome cliente'])
                 ui = st.text_input("Indirizzo", d['indirizzo'])
                 uf = st.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
-                ut = st.text_input("Telefono", d.get('telefono',''))
+                ut = st.text_input("Telefono Fisso", d.get('telefono',''))
             with c2:
                 ur = st.text_input("Referente", d.get('referente',''))
                 uc = st.text_input("Cellulare", d.get('cellulare',''))
@@ -175,9 +173,25 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                     st.session_state.df_master.at[idx, k] = v
                 st.success("Salvato!"); st.rerun()
 
-# ➕ NUOVO CLIENTE
+# --- (PAGINE AGENDA, NUOVO E PARAMETRI RESTANO UGUALI) ---
+elif st.session_state.active_tab == "📅 Agenda 8 Sett":
+    st.header("Programmazione Strategica")
+    s_sel = st.selectbox("Settimana:", [f"Settimana {i}" for i in range(1, 9)])
+    cols = st.columns(5)
+    for i, col in enumerate(cols):
+        with col:
+            dt_g = (lun_base + timedelta(weeks=int(s_sel.split()[-1])-1, days=i)).date()
+            st.subheader(dt_g.strftime("%A")); st.caption(dt_g.strftime("%d/%m"))
+            for v in agenda[s_sel][i]:
+                with st.container(border=True):
+                    st.write(f"**{v['nome cliente']}**")
+                    if st.button("👤 Scheda", key=f"ag_{v['nome cliente']}_{i}"):
+                        st.session_state.cliente_selezionato = v['nome cliente']
+                        st.session_state.active_tab = "👤 Anagrafica"
+                        st.rerun()
+
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
-    st.header("➕ Nuovo Cliente")
+    st.header("➕ Inserisci Nuovo Cliente")
     if st.button("📍 Geocalizza Ora"):
         gps = streamlit_js_eval(js_expressions="window.navigator.geolocation.getCurrentPosition(pos => { window.parent.postMessage({type: 'streamlit:set_component_value', value: pos.coords}, '*') })", key='gps_final')
         if gps: st.session_state.start_lat, st.session_state.start_lon = gps['latitude'], gps['longitude']; st.success("Coordinate acquisite!")
@@ -190,11 +204,10 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 st.session_state.active_tab = "🚀 Giro Oggi"
                 st.rerun()
 
-# ⚙️ PARAMETRI
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Impostazioni")
     st.session_state.h_inizio = st.time_input("Inizio", st.session_state.h_inizio)
     st.session_state.h_fine = st.time_input("Fine", st.session_state.h_fine)
-    if st.button("Ricarica Database Originale (Reset)"):
+    if st.button("Reset Database (Scarica da Google)"):
         st.cache_data.clear()
         del st.session_state.df_master; st.rerun()
