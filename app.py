@@ -1,4 +1,25 @@
 import streamlit as st
+import pandas as pd
+
+# Funzione per leggere Google Sheets in modo semplice
+def load_data(url):
+    # Trasforma il link di condivisione in un link di download diretto
+    path = url.replace('/edit?usp=sharing', '/export?format=csv')
+    return pd.read_csv(path)
+
+# Sostituisci il link qui sotto con il TUO
+URL_FOGLIO = "IL_TUO_LINK_QUI" 
+
+try:
+    df = load_data(URL_FOGLIO)
+    st.success("✅ Dati caricati correttamente dal Foglio Google!")
+    
+    # Qui prosegue il resto del tuo codice (calcolo giro, mappa, ecc.)
+    # ...
+except Exception as e:
+    st.error(f"❌ Errore nel caricamento dei dati: {e}")
+    st.info("Controlla che il link del foglio sia corretto e che l'accesso sia impostato su 'Chiunque abbia il link può visualizzare'.")
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
@@ -19,7 +40,7 @@ st.title("📊 Gestione Visite Real-Time")
 
 # --- CONNESSIONE GOOGLE SHEETS ---
 # Inserisci qui il link del tuo foglio Google tra le virgolette
-URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
+URL_FOGLIO = "https://docs.google.com/spreadsheets/d/IL_TUO_CODICE_LUNGO_QUI/edit?usp=sharing"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
