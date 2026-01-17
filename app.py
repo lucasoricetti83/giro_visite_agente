@@ -53,35 +53,30 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        # Aggiungiamo 'appuntamento' alle colonne necessarie
         colonne_crm = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne_crm:
             if col not in df.columns: df[col] = ""
-            
-        # Conversione dati numerici
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
-        
-        # Conversione Date (Importante per gli appuntamenti)
         df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
+        # Gestione colonna appuntamento
         df['appuntamento'] = pd.to_datetime(df['appuntamento'], errors='coerce')
-        
         return df.dropna(subset=['nome cliente', 'latitude', 'longitude'])
     except Exception as e:
-        st.error(f"Errore caricamento dati: {e}")
+        st.error(f"Errore fetch dati: {e}")
         return pd.DataFrame()
 
-# Carica configurazione permanente dal Cloud
-conf_cloud = fetch_config()
-
-if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
-if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
-if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
-
-if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
-if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
-if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
-if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
+@st.cache_data(ttl=0)
+def fetch_config():
+    try:
+        df_conf = conn.read(spreadsheet=URL_FOGLIO, worksheet="Config")
+        return {
+            'city': str(df_conf.iloc[0]['citta']),
+            'lat': float(df_conf.iloc[0]['lat']),
+            'lon': float(df_conf.iloc[0]['lon'])
+        }
+    except:
+        return {'city': "Ancona", 'lat': 43.6158, 'lon': 13.5189}
 
 # --- 4. CALCOLO PIANO ---
 def calcola_piano():
