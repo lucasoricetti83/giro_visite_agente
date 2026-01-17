@@ -53,16 +53,22 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        colonne_crm = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude']
+        # Aggiungiamo 'appuntamento' alle colonne necessarie
+        colonne_crm = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne_crm:
             if col not in df.columns: df[col] = ""
+            
+        # Conversione dati numerici
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
-        df['visitare'] = df['visitare'].replace("", "SI").fillna("SI").astype(str).str.upper()
+        
+        # Conversione Date (Importante per gli appuntamenti)
         df['ultima visita'] = pd.to_datetime(df['ultima visita'], dayfirst=True, errors='coerce')
+        df['appuntamento'] = pd.to_datetime(df['appuntamento'], errors='coerce')
+        
         return df.dropna(subset=['nome cliente', 'latitude', 'longitude'])
     except Exception as e:
-        st.error(f"Errore fetch: {e}")
+        st.error(f"Errore caricamento dati: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=0)
