@@ -71,23 +71,6 @@ def fetch_data():
         st.error(f"Errore caricamento dati: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=0)
-def fetch_config():
-    try:
-        df_conf = conn.read(spreadsheet=URL_FOGLIO, worksheet="Config")
-        return {
-            'city': str(df_conf.iloc[0]['citta']),
-            'lat': float(df_conf.iloc[0]['lat']),
-            'lon': float(df_conf.iloc[0]['lon'])
-        }
-    except:
-        return {'city': "Ancona", 'lat': 43.6158, 'lon': 13.5189}
-
-# --- 3. STATO DELL'APP ---
-if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
-if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
-if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
-
 # Carica configurazione permanente dal Cloud
 conf_cloud = fetch_config()
 
