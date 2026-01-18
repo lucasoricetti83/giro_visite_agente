@@ -75,6 +75,7 @@ if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selez
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 2
 if 'last_map_click' not in st.session_state: st.session_state.last_map_click = None
+if 'esclusi_oggi' not in st.session_state: st.session_state.esclusi_oggi = []
 
 conf_cloud = fetch_config()
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
@@ -104,9 +105,22 @@ def calcola_piano():
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
             if dt_c in st.session_state.ferie: continue
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
-            appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
+            
+            # FILTRO ESCLUSI (Solo per oggi: s=2, g=oggi_dt.weekday())
+            f_esclusi = []
+            if s == 2 and g == oggi_dt.weekday():
+                f_esclusi = st.session_state.esclusi_oggi
+
+            appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & 
+                                 (df_sim['appuntamento'].dt.date == dt_c) & 
+                                 (~df_sim['nome cliente'].isin(f_esclusi))].sort_values('appuntamento')
+            
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
-            urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
+            
+            urg = df_sim[(df_sim['visitare'] == 'SI') & 
+                        (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & 
+                        (df_sim['appuntamento'].dt.date != dt_c) &
+                        (~df_sim['nome cliente'].isin(f_esclusi))].to_dict('records')
             
             while True:
                 if not appuntamenti.empty:
@@ -146,30 +160,37 @@ for i, m in enumerate(menu):
 st.divider()
 agenda, lun_base, etichette_settimane = calcola_piano()
 
-# --- TAB: GIRO OGGI (CON OTTIMIZZAZIONE) ---
+# --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro di Oggi")
     idx_g = datetime.now().weekday()
     
     if idx_g < 5:
+        # Sezione Esclusi
+        if st.session_state.esclusi_oggi:
+            with st.expander(f"⚠️ {len(st.session_state.esclusi_oggi)} Clienti esclusi per oggi"):
+                for e in st.session_state.esclusi_oggi:
+                    col_e1, col_e2 = st.columns([3, 1])
+                    col_e1.write(f"❌ {e}")
+                    if col_e2.button("🔄 Ripristina", key=f"restore_{e}"):
+                        st.session_state.esclusi_oggi.remove(e)
+                        st.rerun()
+
         tappe = agenda[2][idx_g]
         
         if tappe:
-            # Opzioni di ottimizzazione
-            c_opt1, c_opt2 = st.columns([1, 1])
-            with c_opt1:
-                if st.button("🚀 OTTIMIZZA PERCORSO (GPS)", use_container_width=True):
-                    # Qui servirebbe acquisire GPS reale, per semplicità usiamo l'ultima posizione nota
-                    st.toast("Ricalcolo percorso ottimale in corso...", icon="🔄")
-                    # L'algoritmo di calcola_piano() ha già una logica di vicinanza, 
-                    # forziamo il ricalcolo se necessario.
-            
             c1, c2 = st.columns([1, 2])
             with c1:
                 for t in tappe:
                     tipo_color = "🔵" if "APPUNTAMENTO" in t['tipo_tappa'] else "🚗"
                     with st.container(border=True):
-                        st.write(f"{tipo_color} **{t['ora_arrivo']}** - {t['nome cliente']}")
+                        # Header con nome e pulsante esclusione
+                        h_col1, h_col2 = st.columns([4, 1])
+                        h_col1.write(f"{tipo_color} **{t['ora_arrivo']}** - {t['nome cliente']}")
+                        if h_col2.button("🚫", key=f"skip_{t['nome cliente']}", help="Salta per oggi"):
+                            st.session_state.esclusi_oggi.append(t['nome cliente'])
+                            st.rerun()
+                        
                         st.caption(f"📍 {t['indirizzo']}")
                         cols = st.columns(4)
                         cols[0].link_button("🚗", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}")
@@ -177,23 +198,13 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         if cols[3].button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
             with c2: 
-                # Mappa specifica per il giro di oggi
                 m_oggi = folium.Map(location=[tappe[0]['latitude'], tappe[0]['longitude']], zoom_start=10)
                 punti = [[st.session_state.start_lat, st.session_state.start_lon]]
-                
-                # Aggiungiamo il punto di partenza
                 folium.Marker([st.session_state.start_lat, st.session_state.start_lon], tooltip="PARTENZA", icon=folium.Icon(color='black', icon='home')).add_to(m_oggi)
-                
                 for i, t in enumerate(tappe):
-                    folium.Marker(
-                        [t['latitude'], t['longitude']], 
-                        popup=t['nome cliente'],
-                        tooltip=f"{i+1}. {t['nome cliente']}",
-                        icon=folium.Marker(color='blue' if "APPUNTAMENTO" in t['tipo_tappa'] else 'green')
-                    ).add_to(m_oggi)
+                    color_marker = 'blue' if "APPUNTAMENTO" in t['tipo_tappa'] else 'green'
+                    folium.Marker([t['latitude'], t['longitude']], popup=t['nome cliente'], tooltip=f"{i+1}. {t['nome cliente']}", icon=folium.Icon(color=color_marker)).add_to(m_oggi)
                     punti.append([t['latitude'], t['longitude']])
-                
-                # Disegna la linea del percorso
                 folium.PolyLine(punti, color="blue", weight=2.5, opacity=0.8).add_to(m_oggi)
                 st_folium(m_oggi, width="100%", height=500, key="map_oggi")
         else:
@@ -212,12 +223,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
         m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
         for _, row in df_m.iterrows():
             color = "green" if row['visitare'] == "SI" else "red"
-            folium.Marker(
-                location=[row['latitude'], row['longitude']],
-                popup=row['nome cliente'],
-                tooltip=row['nome cliente'],
-                icon=folium.Icon(color=color, icon="user", prefix="fa")
-            ).add_to(m)
+            folium.Marker(location=[row['latitude'], row['longitude']], popup=row['nome cliente'], tooltip=row['nome cliente'], icon=folium.Icon(color=color, icon="user", prefix="fa")).add_to(m)
         output = st_folium(m, width="100%", height=600, key="main_map")
         clicked_name = output.get("last_object_clicked_popup")
         if clicked_name:
@@ -239,7 +245,6 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     if st.session_state.cliente_selezionato in opzioni_ricerca:
         idx_default = opzioni_ricerca.index(st.session_state.cliente_selezionato)
     scelto = st.selectbox("Cerca cliente:", opzioni_ricerca, index=idx_default)
-    
     if scelto and scelto != "":
         st.session_state.cliente_selezionato = scelto
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
