@@ -273,7 +273,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     if st.button("🔄 Forza Ricarica Cloud"): st.cache_data.clear(); st.rerun()
 
 # --- TAB: AGENDA (CON FRECCE DI NAVIGAZIONE) ---
-elif st.session_state.active_tab == "📅 Agenda 8 Sett":
+elif st.session_state.active_tab == "📅 Agenda":  # <--- Cambiato qui
     weeks = list(agenda.keys())
     
     # Header di Navigazione
