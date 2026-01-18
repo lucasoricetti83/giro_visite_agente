@@ -16,7 +16,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- FUNZIONI DI SALVATAGGIO ---
 def save_to_gsheets(df):
     try:
-        # Pulizia colonne di calcolo prima del salvataggio
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo', 'tipo_tappa']]
         conn.update(spreadsheet=URL_FOGLIO, data=df[cols_to_save])
         st.cache_data.clear() 
@@ -32,7 +31,7 @@ def save_config_cloud(city, lat, lon):
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"Errore Config: {e}")
+        st.error(f"Errore salvataggio Config: {e}")
         return False
 
 # --- 2. UTILS ---
@@ -76,21 +75,21 @@ if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Gir
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 
+# Caricamento posizione persistente dal foglio Config
 conf_cloud = fetch_config()
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
-# Nuovi Parametri Default
+# Parametri Orari e Assenze
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'pausa_inizio' not in st.session_state: st.session_state.pausa_inizio = time(13, 0)
 if 'pausa_fine' not in st.session_state: st.session_state.pausa_fine = time(14, 0)
 if 'ferie' not in st.session_state: st.session_state.ferie = []
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
-if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 
-# --- 4. LOGICA CALCOLO GIRO POTENZIATA ---
+# --- 4. LOGICA CALCOLO GIRO ---
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi_dt = datetime.now()
@@ -101,26 +100,19 @@ def calcola_piano():
     for s in range(1, 9):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
-            
-            # Controllo Ferie
             if dt_c in st.session_state.ferie: continue
             
             o_s = datetime.combine(dt_c, st.session_state.h_inizio)
             p_s = (st.session_state.start_lat, st.session_state.start_lon)
             
-            # Appuntamenti Fissi del giorno
             appuntamenti = df_sim[df_sim['appuntamento'].dt.date == dt_c].sort_values('appuntamento')
-            
-            # Clienti urgenti (non quelli che hanno appuntamento oggi)
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
             
             while True:
-                # 1. Verifica se c'è un appuntamento fisso imminente
                 if not appuntamenti.empty:
                     prossimo_app = appuntamenti.iloc[0]
                     ora_app = prossimo_app['appuntamento'].to_pydatetime()
-                    # Se l'orario attuale è vicino all'appuntamento, vai lì
                     if o_s >= ora_app - timedelta(minutes=st.session_state.durata_v + 15):
                         px = prossimo_app.to_dict()
                         px['ora_arrivo'] = ora_app.strftime("%H:%M")
@@ -131,7 +123,6 @@ def calcola_piano():
                         appuntamenti = appuntamenti.iloc[1:]
                         continue
 
-                # 2. Giro Normale
                 if not urg: break
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
                 dist = haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])
@@ -145,8 +136,6 @@ def calcola_piano():
                     continue
 
                 fine_v = arr + timedelta(minutes=st.session_state.durata_v)
-                
-                # Controllo se la visita finisce prima di un appuntamento o della fine giornata
                 limite = appuntamenti.iloc[0]['appuntamento'].to_pydatetime() if not appuntamenti.empty else datetime.combine(dt_c, st.session_state.h_fine)
                 
                 if fine_v <= limite:
@@ -158,15 +147,14 @@ def calcola_piano():
                     urg.remove(px)
                 else:
                     if appuntamenti.empty: break
-                    else: o_s = limite # Salta l'attesa fino all'appuntamento
-                    
+                    else: o_s = limite
     return agenda_risultato, lun_ref
 
 # --- 5. INTERFACCIA ---
-c_nav = st.columns(5)
+nav = st.columns(5)
 menu = ["🚀 Giro Oggi", "📅 Agenda 8 Sett", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
 for i, m in enumerate(menu):
-    if c_nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
+    if nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m; st.rerun()
 
 st.divider()
@@ -174,7 +162,7 @@ agenda, lun_base = calcola_piano()
 
 # --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
-    st.header(f"📍 Giro di Oggi")
+    st.header(f"📍 Giro di Oggi (Partenza: {st.session_state.start_city})")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
         tappe = agenda["Settimana 1"][idx_g]
@@ -182,105 +170,123 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             c1, c2 = st.columns([1, 2])
             with c1:
                 for t in tappe:
-                    is_vis = pd.to_datetime(t['ultima visita']).date() == datetime.now().date()
                     with st.container(border=True):
                         st.caption(t.get('tipo_tappa', '🚗'))
-                        if is_vis: st.success("✅ VISITATO")
                         st.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
-                        # ... bottoni mappe/tel/mail rimangono invariati ...
                         if st.button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-        else: st.info("Oggi non sono previste visite (o sei in ferie).")
+        else: st.info("Nessuna visita per oggi.")
 
-# --- TAB: ANAGRAFICA (CON DATA ULTIMA VISITA E APPUNTAMENTI) ---
+# --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Cliente")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
     scelto = st.selectbox("Cerca cliente:", nomi)
-    
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
-        
-        # VISUALIZZAZIONE ULTIMA VISITA
-        u_v_str = d['ultima visita'].strftime('%d/%m/%Y') if pd.notnull(d['ultima visita']) else "Mai"
-        st.info(f"📅 Ultima visita effettuata il: **{u_v_str}**")
-        
+        st.info(f"📅 Ultima visita: **{d['ultima visita'].strftime('%d/%m/%Y') if pd.notnull(d['ultima visita']) else 'Mai'}**")
         with st.form("edit"):
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
             uf = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
-            
-            st.subheader("📌 Appuntamento Fisso")
-            val_d = d['appuntamento'].date() if pd.notnull(d['appuntamento']) else None
-            val_t = d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0)
-            app_d = c1.date_input("Data Appuntamento", value=val_d)
-            app_t = c1.time_input("Ora Appuntamento", value=val_t)
+            app_d = c1.date_input("Data Appuntamento", value=d['appuntamento'].date() if pd.notnull(d['appuntamento']) else None)
+            app_t = c1.time_input("Ora Appuntamento", value=d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0))
             rimuovi = c1.checkbox("Rimuovi appuntamento")
-
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
-            uno = st.text_area("Note Cliente", d.get('note', ''))
-            
-            if st.form_submit_button("💾 Salva e Sincronizza Cloud"):
+            uno = st.text_area("Note", d.get('note', ''))
+            if st.form_submit_button("💾 Salva"):
                 st.session_state.df_master.at[idx, 'nome cliente'] = un
                 st.session_state.df_master.at[idx, 'frequenza (giorni)'] = uf
                 st.session_state.df_master.at[idx, 'cellulare'] = uc
                 st.session_state.df_master.at[idx, 'note'] = uno
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
-                
-                if save_to_gsheets(st.session_state.df_master): st.success("Sincronizzato!"); st.rerun()
+                save_to_gsheets(st.session_state.df_master); st.rerun()
 
-# --- TAB: PARAMETRI (CON PAUSA, FERIE ED EXPORT) ---
+# --- TAB: PARAMETRI (REINTEGRATA COMPLETAMENTE) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     
-    # 1. FERIE E PAUSA
-    st.subheader("🏖️ Gestione Assenze e Pause")
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        ferie_input = st.date_input("Seleziona giorni di Ferie (l'agenda li salterà)", value=st.session_state.ferie)
-        st.session_state.ferie = ferie_input if isinstance(ferie_input, list) else [ferie_input]
-    with col_f2:
-        st.session_state.pausa_inizio = st.time_input("Inizio Pausa Pranzo", st.session_state.pausa_inizio)
-        st.session_state.pausa_fine = st.time_input("Fine Pausa Pranzo", st.session_state.pausa_fine)
+    # 1. GEOLOCALIZZAZIONE E PARTENZA PERSISTENTE
+    st.subheader("📍 Punto di Partenza (Sincronizzato Cloud)")
+    c_gps, c_city = st.columns([1, 2])
+    
+    with c_gps:
+        if st.button("🎯 Rileva GPS"):
+            pos = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((position) => { return position.coords; })', target_id='gps_p')
+            if pos:
+                lat, lon = pos['latitude'], pos['longitude']
+                if save_config_cloud("Posizione GPS", lat, lon):
+                    st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = lat, lon, "Posizione GPS"
+                    st.success("📍 GPS salvato!")
+                    st.rerun()
+
+    with c_city:
+        nc = st.text_input("Cambia Città di Partenza:", st.session_state.start_city)
+        if nc != st.session_state.start_city and nc != "Posizione GPS":
+            co = get_coords(nc)
+            if co:
+                if save_config_cloud(nc, co[0], co[1]):
+                    st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
+                    st.success(f"📍 Partenza fissata a {nc}!")
+                    st.rerun()
 
     st.divider()
-    # 2. ESPORTAZIONE EXCEL
-    st.subheader("📊 Esportazione Dati")
+    
+    # 2. ORARI LAVORATIVI E PAUSA
+    st.subheader("⏰ Orari e Pause")
+    co1, co2 = st.columns(2)
+    st.session_state.h_inizio = co1.time_input("Inizio Lavoro", st.session_state.h_inizio)
+    st.session_state.h_fine = co2.time_input("Fine Lavoro", st.session_state.h_fine)
+    
+    cp1, cp2 = st.columns(2)
+    st.session_state.pausa_inizio = cp1.time_input("Inizio Pausa Pranzo", st.session_state.pausa_inizio)
+    st.session_state.pausa_fine = cp2.time_input("Fine Pausa Pranzo", st.session_state.pausa_fine)
+    
+    st.session_state.durata_v = st.slider("Minuti per ogni visita", 15, 120, st.session_state.durata_v)
+
+    st.divider()
+
+    # 3. FERIE E ASSENZE
+    st.subheader("🏖️ Giorni di Chiusura / Ferie")
+    ferie_sel = st.date_input("Seleziona i giorni in cui NON lavori", value=st.session_state.ferie)
+    st.session_state.ferie = ferie_sel if isinstance(ferie_sel, list) else [ferie_sel]
+
+    st.divider()
+
+    # 4. ESPORTAZIONE EXCEL
+    st.subheader("📊 Esportazione")
     def to_excel(df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         return out.getvalue()
-    
-    st.download_button("📥 Scarica Database Excel", to_excel(st.session_state.df_master), "giro_visite_database.xlsx")
+    st.download_button("📥 Scarica Database Excel", to_excel(st.session_state.df_master), "database_crm.xlsx")
 
-    st.divider()
-    # 3. RICARICAMENTO
-    if st.button("🔄 Forza Ricaricamento Totale dal Cloud"):
+    if st.button("🔄 Ricarica forzata Cloud"):
         st.cache_data.clear()
         st.rerun()
 
-# (Le tab Agenda e Nuovo Cliente rimangono funzionalmente simili alle tue versioni precedenti)
+# --- ALTRE TAB ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
-    st.header("📅 Agenda Prossime Settimane")
+    st.header("📅 Agenda")
     sett = st.selectbox("Settimana", list(agenda.keys()))
     cols = st.columns(5)
-    giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
-    for i, g_nome in enumerate(giorni):
+    g_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven"]
+    for i, g in enumerate(g_nomi):
         with cols[i]:
-            st.markdown(f"### {g_nome}")
+            st.subheader(g)
             for t in agenda[sett][i]:
                 with st.container(border=True):
                     st.caption(t.get('tipo_tappa', '🚗'))
                     st.write(f"**{t['ora_arrivo']}** - {t['nome cliente']}")
 
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
-    st.header("➕ Nuovo Cliente")
-    with st.form("new_c"):
-        nn = st.text_input("Ragione Sociale")
+    st.header("➕ Nuovo")
+    with st.form("n"):
+        nn = st.text_input("Nome Cliente")
         ni = st.text_input("Indirizzo")
         if st.form_submit_button("Salva"):
             nuovo = {'nome cliente': nn, 'indirizzo': ni, 'visitare': 'SI', 'frequenza (giorni)': 30, 'ultima visita': pd.Timestamp('2000-01-01'), 'latitude': st.session_state.start_lat, 'longitude': st.session_state.start_lon}
