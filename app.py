@@ -94,6 +94,7 @@ if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi_dt = datetime.now()
+    # Qui definiamo lun_ref
     lun_ref = oggi_dt - timedelta(days=oggi_dt.weekday())
     df_sim = st.session_state.df_master.copy()
     agenda_risultato = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
@@ -106,11 +107,8 @@ def calcola_piano():
             o_s = datetime.combine(dt_c, st.session_state.h_inizio)
             p_s = (st.session_state.start_lat, st.session_state.start_lon)
             
-            # FILTRO CRUCIALE: Considera solo chi ha 'visitare' == 'SI'
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
-            
-            # FILTRO CRUCIALE: Solo chi ha 'visitare' == 'SI' per il giro normale
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
             
             while True:
@@ -151,7 +149,9 @@ def calcola_piano():
                 else:
                     if appuntamenti.empty: break
                     else: o_s = limite
-    return agenda_risultato, lun_base
+    
+    # QUI IL CAMBIO IMPORTANTE: restituiamo lun_ref
+    return agenda_risultato, lun_ref
 
 # --- 5. INTERFACCIA ---
 nav = st.columns(5)
