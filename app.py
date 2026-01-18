@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import pydeck as pdk
+import folium
+from streamlit_folium import st_folium
 from datetime import datetime, timedelta, time
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
@@ -140,6 +141,7 @@ menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafi
 for i, m in enumerate(menu):
     if nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m; st.rerun()
+
 st.divider()
 agenda, lun_base, etichette_settimane = calcola_piano()
 
@@ -161,60 +163,41 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         if cols[3].button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-        else: st.info("Nessuna visita per oggi.")
+        else: st.info("Nessuna visita prevista per oggi.")
 
-# --- TAB: MAPPA (AGGIORNATA) ---
+# --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
-    st.header("🗺️ Analisi Geografica")
-    c1, c2 = st.columns([3, 1])
+    st.header("🗺️ Mappa Interattiva Clienti")
+    st.write("Clicca sul nome o sul segnaposto per aprire la scheda cliente.")
     
-    with c2:
-        st.subheader("Filtri")
-        filtro_tipo = st.radio("Mostra:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=False)
-        st.divider()
-        st.info("💡 Passa il mouse sui punti per vedere i nomi. Usa la lista sotto per aprire le schede.")
-
+    filtro_tipo = st.radio("Filtro clienti:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=True)
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
     
-    # Colore: Verde per SI visitare, Rosso per NO
-    df_m['color_r'] = df_m['visitare'].apply(lambda x: 40 if x == "SI" else 220)
-    df_m['color_g'] = df_m['visitare'].apply(lambda x: 167 if x == "SI" else 53)
-    df_m['color_b'] = df_m['visitare'].apply(lambda x: 69 if x == "SI" else 69)
-
-    # Configurazione Mappa Avanzata (Pydeck)
-    view_state = pdk.ViewState(latitude=df_m['latitude'].mean(), longitude=df_m['longitude'].mean(), zoom=7, pitch=0)
+    # Creazione mappa con Folium (Tiles chiari e definiti)
+    m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8, tiles="OpenStreetMap")
     
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        df_m,
-        get_position='[longitude, latitude]',
-        get_color='[color_r, color_g, color_b, 160]',
-        get_radius=3000,
-        pickable=True,
-    )
+    for _, row in df_m.iterrows():
+        color = "green" if row['visitare'] == "SI" else "red"
+        # Creazione Segnaposto con etichetta nome
+        folium.Marker(
+            location=[row['latitude'], row['longitude']],
+            popup=row['nome cliente'],
+            tooltip=f"<b>{row['nome cliente']}</b><br>{row['indirizzo']}",
+            icon=folium.Icon(color=color, icon="info-sign")
+        ).add_to(m)
 
-    with c1:
-        st.pydeck_chart(pdk.Deck(
-            layers=[layer],
-            initial_view_state=view_state,
-            tooltip={"text": "Cliente: {nome cliente}\nIndirizzo: {indirizzo}"}
-        ))
-
-    st.subheader("📋 Lista Rapida Clienti sulla Mappa")
-    # Griglia di pulsanti per accedere ai clienti
-    cols_cli = st.columns(3)
-    for idx, row in df_m.reset_index().iterrows():
-        col_idx = idx % 3
-        with cols_cli[col_idx]:
-            with st.container(border=True):
-                st.write(f"**{row['nome cliente']}**")
-                st.caption(f"📍 {row['indirizzo']}")
-                if st.button(f"👤 Vai alla scheda", key=f"map_btn_{row['nome cliente']}"):
-                    st.session_state.cliente_selezionato = row['nome cliente']
-                    st.session_state.active_tab = "👤 Anagrafica"
-                    st.rerun()
+    # Visualizzazione Mappa e gestione click
+    map_data = st_folium(m, width="100%", height=600, key="main_map")
+    
+    # Se l'utente clicca su un marker, map_data['last_object_clicked_tooltip'] conterrà il nome
+    if map_data and map_data.get('last_object_clicked_tooltip'):
+        # Pulizia del nome dal tooltip HTML
+        nome_cl = map_data['last_object_clicked_tooltip'].split("</b>")[0].replace("<b>", "")
+        st.session_state.cliente_selezionato = nome_cl
+        st.session_state.active_tab = "👤 Anagrafica"
+        st.rerun()
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
