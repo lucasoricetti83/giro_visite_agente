@@ -51,7 +51,6 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        # Assicuriamo che le colonne chiave siano presenti
         colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
             if col not in df.columns: df[col] = ""
@@ -94,7 +93,6 @@ def calcola_piano():
     lun_ref = lun_corrente - timedelta(weeks=2) 
     df_sim = st.session_state.df_master.copy()
     agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
-    
     etichette = []
     for i in range(11):
         if i < 2: etichette.append(f"Passata (-{2-i})")
@@ -106,9 +104,7 @@ def calcola_piano():
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
             if dt_c in st.session_state.ferie: continue
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
-            
             f_esclusi = st.session_state.esclusi_oggi if (s == 2 and g == oggi_dt.weekday()) else []
-
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].to_dict('records')
@@ -157,13 +153,12 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     idx_g = datetime.now().weekday()
     if idx_g < 5:
         if st.session_state.esclusi_oggi:
-            with st.expander(f"⚠️ {len(st.session_state.esclusi_oggi)} Clienti esclusi"):
+            with st.expander(f"⚠️ {len(st.session_state.esclusi_oggi)} Esclusi"):
                 for e in st.session_state.esclusi_oggi:
                     ce1, ce2 = st.columns([3, 1])
                     ce1.write(f"❌ {e}")
                     if ce2.button("🔄 Ripristina", key=f"res_{e}"):
                         st.session_state.esclusi_oggi.remove(e); st.rerun()
-
         tappe = agenda[2][idx_g]
         if tappe:
             c1, c2 = st.columns([1, 2])
@@ -174,7 +169,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         cn.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
                         if cs.button("🚫", key=f"sk_{t['nome cliente']}"):
                             st.session_state.esclusi_oggi.append(t['nome cliente']); st.rerun()
-                        
                         cols = st.columns(4)
                         cols[0].link_button("🚗", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}")
                         if t.get('cellulare'): cols[1].link_button("📱", f"tel:{t['cellulare']}")
@@ -228,9 +222,24 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         if d.get('cellulare'): c_act[1].link_button("📱 CHIAMA", f"tel:{d['cellulare']}")
         if d.get('mail'): c_act[2].link_button("📧 MAIL", f"mailto:{d['mail']}")
 
+        # --- AGGIUNTA: CALCOLO PROSSIMA VISITA ---
+        st.divider()
+        if pd.notnull(d['ultima visita']) and d['ultima visita'] > pd.Timestamp('2000-01-01'):
+            prox_v = d['ultima visita'] + timedelta(days=int(d['frequenza (giorni)']))
+            giorni_mancanti = (prox_v.date() - datetime.now().date()).days
+            
+            if giorni_mancanti > 0:
+                st.success(f"📅 **Prossima visita suggerita:** {prox_v.strftime('%d/%m/%Y')} (tra {giorni_mancanti} giorni)")
+            elif giorni_mancanti == 0:
+                st.warning(f"📅 **Prossima visita suggerita:** OGGI!")
+            else:
+                st.error(f"📅 **Visita SCADUTA il:** {prox_v.strftime('%d/%m/%Y')} ({abs(giorni_mancanti)} giorni fa)")
+        else:
+            st.info("📅 **Stato:** Cliente mai visitato. Verrà inserito nel primo giro utile.")
+        
         st.divider()
 
-        # FUNZIONE: APPENA VISITATO (DATA VARIABILE + STORICO REPORT)
+        # FUNZIONE: APPENA VISITATO
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
             if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True):
@@ -239,15 +248,12 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             if st.session_state.get('show_quick_report', False):
                 cr1, cr2 = st.columns([1, 2])
                 data_v = cr1.date_input("Data della visita:", value=datetime.now().date())
-                report_t = st.text_area("Cosa è emerso dalla visita?", placeholder="Scrivi qui il report...")
+                report_t = st.text_area("Cosa è emerso dalla visita?", placeholder="Inserisci il report qui...")
                 
                 b_col1, b_col2 = st.columns(2)
                 if b_col1.button("💾 SALVA REPORT IN STORICO", use_container_width=True):
-                    # Preparo il nuovo report con data
                     nuovo_entry = f"[{data_v.strftime('%d/%m/%Y')}] {report_t}"
                     storico_vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
-                    
-                    # Lo metto in cima (Prepend)
                     if storico_vecchio and storico_vecchio != "nan" and storico_vecchio.strip() != "":
                         storico_aggiornato = nuovo_entry + "\n\n" + storico_vecchio
                     else:
@@ -256,7 +262,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                     st.session_state.df_master.at[idx, 'storico report'] = storico_aggiornato
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(data_v)
                     if save_to_gsheets(st.session_state.df_master):
-                        st.success("Visita registrata nello storico!")
+                        st.success(f"Visita registrata correttamente!")
                         st.session_state.show_quick_report = False
                         st.rerun()
                 if b_col2.button("Annulla", use_container_width=True):
@@ -268,7 +274,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.form("edit_anag"):
             c1, c2 = st.columns(2)
             un, ui = c1.text_input("Ragione Sociale", d['nome cliente']), c1.text_input("Indirizzo", d['indirizzo'])
-            uco = c1.text_input("Contatti", d.get('contatto', '')) # VOCE CONTATTI AGGIUNTA
+            u_cont = c1.text_input("Contatti", d.get('contatto', ''))
             uf, scelta_v = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)'])), c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut, uc, um = c2.text_input("Telefono", d.get('telefono', '')), c2.text_input("Cellulare", d.get('cellulare','')), c2.text_input("Email", d.get('mail',''))
             st.divider()
@@ -277,14 +283,12 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             rimuovi = c2.checkbox("Rimuovi appuntamento")
             
             st.subheader("📝 Note (Annotazioni fisse)")
-            uno = st.text_area("Annotazioni permanenti", d.get('note', ''), height=100)
-            
-            st.subheader("📜 Storico Report Visite")
-            ust = st.text_area("Storico completo (dal più recente)", d.get('storico report', ''), height=200)
+            u_note = st.text_area("Note", d.get('note', ''), height=100)
+            st.subheader("📜 Storico Report")
+            u_storico = st.text_area("Storico report", d.get('storico report', ''), height=200)
             
             if st.form_submit_button("💾 Salva Modifiche Anagrafiche"):
-                # CORREZIONE ERRORE INVALIDINDEXERROR: Usiamo .loc per colonne multiple
-                st.session_state.df_master.loc[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,uco,uf,scelta_v,ut,uc,um,uno,ust]
+                st.session_state.df_master.loc[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,u_cont,uf,scelta_v,ut,uc,um,u_note, u_storico]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
@@ -307,7 +311,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn, nf = c1.text_input("Ragione Sociale *"), c1.number_input("Frequenza Visite (gg)", value=30)
-        nco = c1.text_input("Contatti") # VOCE CONTATTI AGGIUNTA
+        n_cont = c1.text_input("Contatti")
         ut, uc, um = c2.text_input("Telefono"), c2.text_input("Cellulare"), c2.text_input("Email")
         st.divider()
         via = st.text_input("Via e Civico")
@@ -328,7 +332,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': nco, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': n_cont, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success("✅ Cliente salvato!"); st.rerun()
