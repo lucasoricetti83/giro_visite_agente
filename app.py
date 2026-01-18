@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import pydeck as pdk
 from datetime import datetime, timedelta, time
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
@@ -71,7 +72,6 @@ def fetch_config():
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
-# L'indice 2 corrisponde alla "Settimana Corrente" (dopo le 2 passate)
 if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 2
 
 conf_cloud = fetch_config()
@@ -79,7 +79,6 @@ if 'start_city' not in st.session_state: st.session_state.start_city = conf_clou
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
-# Parametri Default
 for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': time(13, 0), 'pausa_fine': time(14, 0), 'durata_v': 45, 'ferie': (datetime.now().date(), datetime.now().date())}.items():
     if key not in st.session_state: st.session_state[key] = val
 
@@ -87,29 +86,22 @@ for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': 
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now(), []
     oggi_dt = datetime.now()
-    
-    # Calcolo lunedì di riferimento: oggi -> lunedì corrente -> indietro di 2 settimane
     lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
     lun_ref = lun_corrente - timedelta(weeks=2) 
-    
     df_sim = st.session_state.df_master.copy()
-    
-    # 11 settimane totali (2 passate + 1 corrente + 8 future)
     agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
     
     etichette = []
     for i in range(11):
-        if i < 2: etichette.append(f"Settimana Passata (-{2-i})")
+        if i < 2: etichette.append(f"Passata (-{2-i})")
         elif i == 2: etichette.append("Settimana Corrente")
-        else: etichette.append(f"Settimana Futura (+{i-2})")
+        else: etichette.append(f"Futura (+{i-2})")
     
     for s in range(11):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
             if dt_c in st.session_state.ferie: continue
-            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
-            
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
@@ -124,18 +116,14 @@ def calcola_piano():
                         agenda_risultato[s][g].append(px)
                         o_s, p_s = ora_app + timedelta(minutes=st.session_state.durata_v), (px['latitude'], px['longitude'])
                         appuntamenti = appuntamenti.iloc[1:]; continue
-                
                 if not urg: break
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
                 dist = haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])
                 arr = o_s + timedelta(minutes=(dist/50)*60)
-                
                 if arr >= datetime.combine(dt_c, st.session_state.pausa_inizio) and arr < datetime.combine(dt_c, st.session_state.pausa_fine):
                     o_s = datetime.combine(dt_c, st.session_state.pausa_fine); continue
-                
                 fine_v = arr + timedelta(minutes=st.session_state.durata_v)
                 limite = appuntamenti.iloc[0]['appuntamento'].to_pydatetime() if not appuntamenti.empty else datetime.combine(dt_c, st.session_state.h_fine)
-                
                 if fine_v <= limite:
                     px['ora_arrivo'] = arr.strftime("%H:%M")
                     px['tipo_tappa'] = "🚗 Giro"
@@ -144,7 +132,6 @@ def calcola_piano():
                     o_s, p_s = fine_v, (px['latitude'], px['longitude'])
                     urg.remove(px)
                 else: break
-                
     return agenda_risultato, lun_ref, etichette
 
 # --- 5. INTERFACCIA ---
@@ -153,10 +140,7 @@ menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafi
 for i, m in enumerate(menu):
     if nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m; st.rerun()
-
 st.divider()
-
-# Esecuzione calcolo e recupero dei 3 valori necessari
 agenda, lun_base, etichette_settimane = calcola_piano()
 
 # --- TAB: GIRO OGGI ---
@@ -164,7 +148,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro di Oggi")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
-        # Usiamo l'indice 2 (settimana corrente) per il giro di oggi
         tappe = agenda[2][idx_g]
         if tappe:
             c1, c2 = st.columns([1, 2])
@@ -178,22 +161,60 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         if cols[3].button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-        else: st.info("Nessuna visita prevista per oggi.")
-    else:
-        st.info("Oggi è fine settimana, riposati!")
+        else: st.info("Nessuna visita per oggi.")
 
-# --- TAB: MAPPA ---
+# --- TAB: MAPPA (AGGIORNATA) ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Analisi Geografica")
-    filtro_tipo = st.radio("Filtro:", ["Tutti i Clienti", "Visitati", "Mai Visitati", "Singolo Cliente"], horizontal=True)
+    c1, c2 = st.columns([3, 1])
+    
+    with c2:
+        st.subheader("Filtri")
+        filtro_tipo = st.radio("Mostra:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=False)
+        st.divider()
+        st.info("💡 Passa il mouse sui punti per vedere i nomi. Usa la lista sotto per aprire le schede.")
+
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
-    elif filtro_tipo == "Singolo Cliente":
-        cli = st.selectbox("Scegli cliente:", sorted(df_m['nome cliente'].unique()))
-        df_m = df_m[df_m['nome cliente'] == cli]
-    df_m['color'] = df_m['visitare'].apply(lambda x: "#28a745" if x == "SI" else "#dc3545")
-    st.map(df_m, latitude='latitude', longitude='longitude', color='color', size=25)
+    
+    # Colore: Verde per SI visitare, Rosso per NO
+    df_m['color_r'] = df_m['visitare'].apply(lambda x: 40 if x == "SI" else 220)
+    df_m['color_g'] = df_m['visitare'].apply(lambda x: 167 if x == "SI" else 53)
+    df_m['color_b'] = df_m['visitare'].apply(lambda x: 69 if x == "SI" else 69)
+
+    # Configurazione Mappa Avanzata (Pydeck)
+    view_state = pdk.ViewState(latitude=df_m['latitude'].mean(), longitude=df_m['longitude'].mean(), zoom=7, pitch=0)
+    
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        df_m,
+        get_position='[longitude, latitude]',
+        get_color='[color_r, color_g, color_b, 160]',
+        get_radius=3000,
+        pickable=True,
+    )
+
+    with c1:
+        st.pydeck_chart(pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            tooltip={"text": "Cliente: {nome cliente}\nIndirizzo: {indirizzo}"}
+        ))
+
+    st.subheader("📋 Lista Rapida Clienti sulla Mappa")
+    # Griglia di pulsanti per accedere ai clienti
+    cols_cli = st.columns(3)
+    for idx, row in df_m.reset_index().iterrows():
+        col_idx = idx % 3
+        with cols_cli[col_idx]:
+            with st.container(border=True):
+                st.write(f"**{row['nome cliente']}**")
+                st.caption(f"📍 {row['indirizzo']}")
+                if st.button(f"👤 Vai alla scheda", key=f"map_btn_{row['nome cliente']}"):
+                    st.session_state.cliente_selezionato = row['nome cliente']
+                    st.session_state.active_tab = "👤 Anagrafica"
+                    st.rerun()
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
@@ -299,43 +320,28 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 
 # --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda":
-    # Calcolo delle date per la settimana visualizzata
-    data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
+    agenda, lun_ref_calcolato, etichette_settimane = calcola_piano()
+    data_lunedi = lun_ref_calcolato + timedelta(weeks=st.session_state.current_week_index)
     data_venerdi = data_lunedi + timedelta(days=4)
     range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
-
-    # Header di Navigazione
     col_prev, col_title, col_next = st.columns([1, 2, 1])
-    
     with col_prev:
-        # Disabilitato se siamo alla prima settimana passata (indice 0)
         if st.button("⬅️ Precedente", disabled=(st.session_state.current_week_index == 0), use_container_width=True):
-            st.session_state.current_week_index -= 1
-            st.rerun()
-            
+            st.session_state.current_week_index -= 1; st.rerun()
     with col_title:
-        # Usa la lista etichette_settimane recuperata prima
         titolo_sett = etichette_settimane[st.session_state.current_week_index]
         st.markdown(f"<h3 style='text-align: center; margin-bottom: 0;'>📅 {titolo_sett}</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='text-align: center; color: #666; font-size: 1.1em;'>{range_date}</p>", unsafe_allow_html=True)
-        
     with col_next:
-        # Disabilitato se siamo all'ultima settimana futura (indice 10)
         if st.button("Successiva ➡️", disabled=(st.session_state.current_week_index == 10), use_container_width=True):
-            st.session_state.current_week_index += 1
-            st.rerun()
-
+            st.session_state.current_week_index += 1; st.rerun()
     st.divider()
-    
-    # Renderizzazione Giorni
     cols = st.columns(5)
     g_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven"]
     for i, g in enumerate(g_nomi):
         data_giorno = data_lunedi + timedelta(days=i)
         with cols[i]:
-            # Subheader con numero del giorno
             st.subheader(f"{g} {data_giorno.day}")
-            # Accesso all'agenda tramite l'indice della settimana selezionata
             for t in agenda[st.session_state.current_week_index][i]:
                 with st.container(border=True):
                     st.caption(f"🕒 {t['ora_arrivo']}")
