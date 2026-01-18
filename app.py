@@ -40,10 +40,8 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * 6371 * asin(sqrt(sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2))
 
 def get_coords(address):
-    """Cerca le coordinate con timeout lungo e user_agent dedicato"""
     try:
         geolocator = Nominatim(user_agent="giro_visite_agente_v25")
-        # Aggiungiamo sempre 'Italia' per evitare risultati all'estero
         location = geolocator.geocode(f"{address}, Italia", timeout=10)
         return (location.latitude, location.longitude) if location else None
     except: return None
@@ -171,12 +169,10 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    
     filtro_tipo = st.radio("Filtro clienti:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=True)
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
-    
     if not df_m.empty:
         m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
         for _, row in df_m.iterrows():
@@ -199,13 +195,24 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
                 st.toast(f"Selezionato: {clicked_name}. Tocca di nuovo per aprire.", icon="👤")
     else: st.warning("Nessun cliente trovato.")
 
-# --- TAB: ANAGRAFICA ---
+# --- TAB: ANAGRAFICA (MODIFICATA PER RICERCA VUOTA) ---
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
-    nomi = sorted(st.session_state.df_master['nome cliente'].unique())
-    idx_default = nomi.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in nomi else 0
-    scelto = st.selectbox("Cerca cliente:", nomi, index=idx_default)
-    if scelto:
+    
+    # Preparazione lista nomi con opzione vuota all'inizio
+    nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
+    opzioni_ricerca = [""] + nomi_reali
+    
+    # Determina l'indice di default: 
+    # Se abbiamo un cliente selezionato (da mappa o agenda), cerchiamo il suo indice.
+    # Altrimenti, l'indice è 0 (ovvero il campo vuoto "").
+    idx_default = 0
+    if st.session_state.cliente_selezionato in opzioni_ricerca:
+        idx_default = opzioni_ricerca.index(st.session_state.cliente_selezionato)
+    
+    scelto = st.selectbox("Cerca cliente:", opzioni_ricerca, index=idx_default)
+    
+    if scelto and scelto != "":
         st.session_state.cliente_selezionato = scelto
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
@@ -234,16 +241,20 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.expander("🗑️ ELIMINA CLIENTE"):
             if st.checkbox("Confermo eliminazione") and st.button("❌ ELIMINA ORA"):
                 st.session_state.df_master = st.session_state.df_master.drop(idx)
+                # Dopo l'eliminazione, resetto la selezione
+                st.session_state.cliente_selezionato = None
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
+    else:
+        st.info("Seleziona un cliente dalla lista o cercalo per nome per visualizzare la scheda.")
+        # Se l'utente svuota il campo manualmente, resetto lo stato
+        st.session_state.cliente_selezionato = None
 
-# --- TAB: NUOVO CLIENTE (MODALITÀ TOLLERANTE) ---
+# --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
-    
     if st.button("🎯 USA POSIZIONE GPS ATTUALE"):
         pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v21')
         if pos_new: st.session_state.new_coords = (pos_new['latitude'], pos_new['longitude'])
-
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn, nf = c1.text_input("Ragione Sociale *"), c1.number_input("Frequenza Visite (gg)", value=30)
@@ -255,41 +266,24 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         st.divider()
         m_lat = st.text_input("Latitudine Manuale (opzionale)")
         m_lon = st.text_input("Longitudine Manuale (opzionale)")
-
         if st.form_submit_button("✅ CREA E SALVA"):
             if nn and cit:
                 ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ").strip()
                 lat, lon = None, None
-
-                # 1. Coordinate Manuali o GPS
-                if m_lat and m_lon:
-                    lat, lon = float(m_lat), float(m_lon)
-                elif 'new_coords' in st.session_state:
-                    lat, lon = st.session_state.new_coords
-                
-                # 2. Ricerca Automatica Graduale (MODALITÀ TOLLERANTE)
+                if m_lat and m_lon: lat, lon = float(m_lat), float(m_lon)
+                elif 'new_coords' in st.session_state: lat, lon = st.session_state.new_coords
                 else:
                     with st.spinner("Cerco la posizione..."):
-                        # Prova A: Indirizzo Completo
                         lat, lon = get_coords(ind_comp) or (None, None)
-                        if not lat and via:
-                            # Prova B: Solo Via e Città (ignora errori civico)
-                            lat, lon = get_coords(f"{via}, {cit}") or (None, None)
-                        if not lat:
-                            # Prova C: Solo Città (Posizione sicura)
-                            lat, lon = get_coords(cit) or (None, None)
-
+                        if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
+                        if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
                     nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
-                        st.success("✅ Cliente salvato!")
-                        if 'new_coords' in st.session_state: del st.session_state.new_coords
-                        st.rerun()
-                else:
-                    st.error("❌ Impossibile trovare la città. Controlla come l'hai scritta.")
-            else:
-                st.warning("⚠️ Nome e Città sono obbligatori.")
+                        st.success("✅ Cliente salvato!"); st.rerun()
+                else: st.error("❌ Impossibile trovare la città.")
+            else: st.warning("⚠️ Nome e Città sono obbligatori.")
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
