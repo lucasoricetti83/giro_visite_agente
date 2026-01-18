@@ -40,9 +40,12 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * 6371 * asin(sqrt(sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2))
 
 def get_coords(address):
+    """Cerca le coordinate aggiungendo sempre 'Italia' per precisione"""
     try:
-        geolocator = Nominatim(user_agent="giro_visite_v23_pro")
-        location = geolocator.geocode(address, timeout=10)
+        geolocator = Nominatim(user_agent="giro_visite_v24_pro_italy")
+        # Aggiungo Italia per restringere il campo di ricerca
+        search_query = f"{address}, Italia"
+        location = geolocator.geocode(search_query, timeout=10)
         return (location.latitude, location.longitude) if location else None
     except: return None
 
@@ -238,12 +241,11 @@ elif st.session_state.active_tab == "👤 Anagrafica":
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
-    c_gps, c_st = st.columns([1, 2])
-    pos_new = None
-    with c_gps:
-        if st.button("🎯 USA POSIZIONE GPS ATTUALE", key="gps_new_btn"):
-            pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v21')
-    if pos_new: st.success(f"✅ GPS acquisito!")
+    
+    # Sezione GPS
+    if st.button("🎯 USA POSIZIONE GPS ATTUALE", key="gps_new_btn"):
+        pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v21')
+        if pos_new: st.session_state.new_coords = (pos_new['latitude'], pos_new['longitude'])
 
     with st.form("new_full"):
         c1, c2 = st.columns(2)
@@ -253,57 +255,61 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         via = st.text_input("Via e Civico")
         ca_row = st.columns([1, 2, 1])
         cap, cit, pro = ca_row[0].text_input("CAP"), ca_row[1].text_input("Città *"), ca_row[2].text_input("Prov.")
-        no = st.text_area("Note iniziali")
+        st.divider()
         
+        # Opzione manuale se tutto fallisce
+        st.write("🆘 Se l'indirizzo non viene trovato, inserisci qui le coordinate manuali:")
+        m_lat = st.text_input("Latitudine (es: 43.1234)")
+        m_lon = st.text_input("Longitudine (es: 12.1234)")
+
         if st.form_submit_button("✅ CREA E SALVA"):
-            if nn and (cit or pos_new):
+            if nn and (cit or m_lat):
                 ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ").strip()
-                lat, lon = (pos_new['latitude'], pos_new['longitude']) if pos_new else (None, None)
+                lat, lon = None, None
+
+                # 1. Prova GPS Attuale
+                if 'new_coords' in st.session_state:
+                    lat, lon = st.session_state.new_coords
                 
-                if not lat:
-                    with st.spinner("Geolocalizzazione in corso..."):
-                        # Tentativo 1: Indirizzo Completo
-                        coords = get_coords(ind_comp)
-                        if coords:
-                            lat, lon = coords
-                        else:
-                            # Tentativo 2: Via e Città (più flessibile)
-                            ind_via_cit = f"{via}, {cit}".strip(", ").strip()
-                            st.warning(f"Indirizzo preciso non trovato. Provo con: {ind_via_cit}")
-                            coords = get_coords(ind_via_cit)
-                            if coords:
-                                lat, lon = coords
-                            else:
-                                # Tentativo 3: Solo Città (punto generico)
-                                st.warning(f"Via non riconosciuta. Posiziono al centro di {cit}")
-                                coords = get_coords(cit)
-                                if coords:
-                                    lat, lon = coords
-                
+                # 2. Prova inserimento Manuale
+                elif m_lat and m_lon:
+                    lat, lon = float(m_lat), float(m_lon)
+
+                # 3. Prova ricerca Automatica (Cascata)
+                else:
+                    with st.spinner("Ricerca posizione in corso..."):
+                        # Prova 1: Indirizzo Completo
+                        lat, lon = get_coords(ind_comp) or (None, None)
+                        if not lat:
+                            # Prova 2: Via e Città
+                            lat, lon = get_coords(f"{via}, {cit}") or (None, None)
+                        if not lat:
+                            # Prova 3: Solo Città
+                            lat, lon = get_coords(cit) or (None, None)
+
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': no, 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success(f"✅ {nn} registrato!")
+                        if 'new_coords' in st.session_state: del st.session_state.new_coords
                         st.rerun()
                 else:
-                    st.error("❌ Impossibile geolocalizzare il cliente. Verifica i nomi di città e via.")
+                    st.error(f"❌ Impossibile trovare '{ind_comp}'. Verifica la città o usa le coordinate manuali.")
             else:
-                st.warning("⚠️ Compila Ragione Sociale e Città.")
+                st.warning("⚠️ Ragione Sociale e Città sono obbligatori.")
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     st.subheader("📍 Punto di Partenza")
-    c_gps, c_city = st.columns([1, 2])
-    with c_gps:
-        if st.button("🎯 USA GPS ATTUALE", key="gps_param"):
-            gps_p = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_param_v21')
-            if gps_p:
-                if save_config_cloud("Posizione GPS", gps_p['latitude'], gps_p['longitude']):
-                    st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = gps_p['latitude'], gps_p['longitude'], "Posizione GPS"
-                    st.rerun()
-    nc = c_city.text_input("Oppure scrivi Città:", st.session_state.start_city)
+    if st.button("🎯 USA GPS ATTUALE", key="gps_param"):
+        gps_p = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_param_v21')
+        if gps_p:
+            if save_config_cloud("Posizione GPS", gps_p['latitude'], gps_p['longitude']):
+                st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = gps_p['latitude'], gps_p['longitude'], "Posizione GPS"
+                st.rerun()
+    nc = st.text_input("Oppure scrivi Città:", st.session_state.start_city)
     if nc != st.session_state.start_city and nc != "Posizione GPS":
         co = get_coords(nc)
         if co and save_config_cloud(nc, co[0], co[1]):
@@ -328,7 +334,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 # --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda":
     agenda, lun_ref_calcolato, etichette_settimane = calcola_piano()
-    data_lunedi = lun_ref_calcolato + timedelta(weeks=st.session_state.current_week_index)
+    data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     data_venerdi = data_lunedi + timedelta(days=4)
     range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
     col_prev, col_title, col_next = st.columns([1, 2, 1])
