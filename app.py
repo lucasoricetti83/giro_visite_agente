@@ -71,7 +71,8 @@ def fetch_config():
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
-if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 0
+# Impostiamo l'indice a 2 (che corrisponde alla settimana corrente)
+if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 2
 
 conf_cloud = fetch_config()
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
