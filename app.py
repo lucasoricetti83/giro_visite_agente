@@ -51,7 +51,7 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        # Assicuriamo che tutte le colonne, comprese 'contatto' e 'storico report', siano gestite
+        # Assicuriamo che le colonne chiave siano presenti
         colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
             if col not in df.columns: df[col] = ""
@@ -155,7 +155,6 @@ agenda, lun_base, etichette_settimane = calcola_piano()
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro di Oggi")
     idx_g = datetime.now().weekday()
-    
     if idx_g < 5:
         if st.session_state.esclusi_oggi:
             with st.expander(f"⚠️ {len(st.session_state.esclusi_oggi)} Clienti esclusi"):
@@ -216,7 +215,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
     opzioni_ricerca = [""] + nomi_reali
-    idx_default = nomi_reali.index(st.session_state.cliente_selezionato) + 1 if st.session_state.cliente_selezionato in nomi_reali else 0
+    idx_default = opzioni_ricerca.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in opzioni_ricerca else 0
     scelto = st.selectbox("Cerca cliente:", opzioni_ricerca, index=idx_default)
     
     if scelto and scelto != "":
@@ -231,7 +230,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
 
         st.divider()
 
-        # FUNZIONE: APPENA VISITATO (CRONOLOGICO - DAL PIU RECENTE AL PIU VECCHIO)
+        # FUNZIONE: APPENA VISITATO (DATA VARIABILE + STORICO REPORT)
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
             if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True):
@@ -240,16 +239,15 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             if st.session_state.get('show_quick_report', False):
                 cr1, cr2 = st.columns([1, 2])
                 data_v = cr1.date_input("Data della visita:", value=datetime.now().date())
-                report_t = st.text_area("Cosa è emerso dalla visita?", placeholder="Inserisci il report qui...")
+                report_t = st.text_area("Cosa è emerso dalla visita?", placeholder="Scrivi qui il report...")
                 
                 b_col1, b_col2 = st.columns(2)
                 if b_col1.button("💾 SALVA REPORT IN STORICO", use_container_width=True):
-                    # Formatta il nuovo report con la data selezionata
+                    # Preparo il nuovo report con data
                     nuovo_entry = f"[{data_v.strftime('%d/%m/%Y')}] {report_t}"
-                    # Recupera lo storico esistente (colonna 'storico report')
                     storico_vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
                     
-                    # Logica per mettere il nuovo testo in cima
+                    # Lo metto in cima (Prepend)
                     if storico_vecchio and storico_vecchio != "nan" and storico_vecchio.strip() != "":
                         storico_aggiornato = nuovo_entry + "\n\n" + storico_vecchio
                     else:
@@ -258,7 +256,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                     st.session_state.df_master.at[idx, 'storico report'] = storico_aggiornato
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(data_v)
                     if save_to_gsheets(st.session_state.df_master):
-                        st.success(f"Visita registrata correttamente!")
+                        st.success("Visita registrata nello storico!")
                         st.session_state.show_quick_report = False
                         st.rerun()
                 if b_col2.button("Annulla", use_container_width=True):
@@ -270,7 +268,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.form("edit_anag"):
             c1, c2 = st.columns(2)
             un, ui = c1.text_input("Ragione Sociale", d['nome cliente']), c1.text_input("Indirizzo", d['indirizzo'])
-            u_contatti = c1.text_input("Contatti", d.get('contatto', '')) # VOCE AGGIUNTA
+            uco = c1.text_input("Contatti", d.get('contatto', '')) # VOCE CONTATTI AGGIUNTA
             uf, scelta_v = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)'])), c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut, uc, um = c2.text_input("Telefono", d.get('telefono', '')), c2.text_input("Cellulare", d.get('cellulare','')), c2.text_input("Email", d.get('mail',''))
             st.divider()
@@ -278,15 +276,15 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             app_t = c1.time_input("Ora Appuntamento", value=d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0))
             rimuovi = c2.checkbox("Rimuovi appuntamento")
             
-            # DIVISIONE TRA NOTE FISSE E STORICO REPORT
-            st.subheader("📝 Note (Annotazioni sempre visibili)")
-            u_note = st.text_area("Inserisci annotazioni fisse qui", d.get('note', ''), height=100)
+            st.subheader("📝 Note (Annotazioni fisse)")
+            uno = st.text_area("Annotazioni permanenti", d.get('note', ''), height=100)
             
-            st.subheader("📜 Storico Report (Dal più recente)")
-            u_storico = st.text_area("Tutti i report delle visite passate", d.get('storico report', ''), height=250)
+            st.subheader("📜 Storico Report Visite")
+            ust = st.text_area("Storico completo (dal più recente)", d.get('storico report', ''), height=200)
             
             if st.form_submit_button("💾 Salva Modifiche Anagrafiche"):
-                st.session_state.df_master.at[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,u_contatti,uf,scelta_v,ut,uc,um,u_note, u_storico]
+                # CORREZIONE ERRORE INVALIDINDEXERROR: Usiamo .loc per colonne multiple
+                st.session_state.df_master.loc[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,uco,uf,scelta_v,ut,uc,um,uno,ust]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
@@ -309,7 +307,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn, nf = c1.text_input("Ragione Sociale *"), c1.number_input("Frequenza Visite (gg)", value=30)
-        n_contatti = c1.text_input("Contatti") # VOCE AGGIUNTA
+        nco = c1.text_input("Contatti") # VOCE CONTATTI AGGIUNTA
         ut, uc, um = c2.text_input("Telefono"), c2.text_input("Cellulare"), c2.text_input("Email")
         st.divider()
         via = st.text_input("Via e Civico")
@@ -330,7 +328,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': n_contatti, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': nco, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success("✅ Cliente salvato!"); st.rerun()
