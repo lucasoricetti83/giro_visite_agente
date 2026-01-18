@@ -176,36 +176,27 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
     
-    # Centro la mappa
-    m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
-    
-    for _, row in df_m.iterrows():
-        color = "green" if row['visitare'] == "SI" else "red"
-        folium.Marker(
-            location=[row['latitude'], row['longitude']],
-            popup=row['nome cliente'],
-            tooltip=row['nome cliente'],
-            icon=folium.Icon(color=color, icon="user", prefix="fa")
-        ).add_to(m)
-
-    # Visualizzazione Mappa
-    output = st_folium(m, width="100%", height=600, key="main_map")
-    
-    # LOGICA DOPPIO CLICK (Conferma navigazione)
-    clicked_name = output.get("last_object_clicked_popup")
-    
-    if clicked_name:
-        # Se il nome cliccato è uguale a quello salvato nell'ultimo click, naviga
-        if st.session_state.last_map_click == clicked_name:
-            st.session_state.cliente_selezionato = clicked_name
-            st.session_state.last_map_click = None # Reset dopo la navigazione
-            st.session_state.active_tab = "👤 Anagrafica"
-            st.rerun()
-        else:
-            # Altrimenti salva il nome come "ultimo click" e aspetta il secondo tocco
-            st.session_state.last_map_click = clicked_name
-            # Mostriamo un avviso temporaneo per l'utente mobile
-            st.toast(f"Hai selezionato: {clicked_name}. Tocca di nuovo per aprire la scheda.", icon="👤")
+    if not df_m.empty:
+        m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
+        for _, row in df_m.iterrows():
+            color = "green" if row['visitare'] == "SI" else "red"
+            folium.Marker(
+                location=[row['latitude'], row['longitude']],
+                popup=row['nome cliente'],
+                tooltip=row['nome cliente'],
+                icon=folium.Icon(color=color, icon="user", prefix="fa")
+            ).add_to(m)
+        output = st_folium(m, width="100%", height=600, key="main_map")
+        clicked_name = output.get("last_object_clicked_popup")
+        if clicked_name:
+            if st.session_state.last_map_click == clicked_name:
+                st.session_state.cliente_selezionato = clicked_name
+                st.session_state.last_map_click = None
+                st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
+            else:
+                st.session_state.last_map_click = clicked_name
+                st.toast(f"Selezionato: {clicked_name}. Tocca di nuovo per aprire.", icon="👤")
+    else: st.warning("Nessun cliente da mostrare.")
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
@@ -263,17 +254,42 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         ca_row = st.columns([1, 2, 1])
         cap, cit, pro = ca_row[0].text_input("CAP"), ca_row[1].text_input("Città *"), ca_row[2].text_input("Prov.")
         no = st.text_area("Note iniziali")
+        
         if st.form_submit_button("✅ CREA E SALVA"):
             if nn and (cit or pos_new):
-                ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ")
+                ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ").strip()
                 lat, lon = (pos_new['latitude'], pos_new['longitude']) if pos_new else (None, None)
+                
                 if not lat:
-                    coords = get_coords(ind_comp)
-                    if coords: lat, lon = coords
+                    with st.spinner("Geolocalizzazione in corso..."):
+                        # Tentativo 1: Indirizzo Completo
+                        coords = get_coords(ind_comp)
+                        if coords:
+                            lat, lon = coords
+                        else:
+                            # Tentativo 2: Via e Città (più flessibile)
+                            ind_via_cit = f"{via}, {cit}".strip(", ").strip()
+                            st.warning(f"Indirizzo preciso non trovato. Provo con: {ind_via_cit}")
+                            coords = get_coords(ind_via_cit)
+                            if coords:
+                                lat, lon = coords
+                            else:
+                                # Tentativo 3: Solo Città (punto generico)
+                                st.warning(f"Via non riconosciuta. Posiziono al centro di {cit}")
+                                coords = get_coords(cit)
+                                if coords:
+                                    lat, lon = coords
+                
                 if lat:
                     nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': no, 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                    if save_to_gsheets(st.session_state.df_master): st.rerun()
+                    if save_to_gsheets(st.session_state.df_master):
+                        st.success(f"✅ {nn} registrato!")
+                        st.rerun()
+                else:
+                    st.error("❌ Impossibile geolocalizzare il cliente. Verifica i nomi di città e via.")
+            else:
+                st.warning("⚠️ Compila Ragione Sociale e Città.")
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
