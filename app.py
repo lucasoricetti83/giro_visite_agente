@@ -75,19 +75,22 @@ if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Gir
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 
-# Caricamento posizione persistente dal foglio Config
+# Caricamento posizione persistente
 conf_cloud = fetch_config()
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
-# Parametri Orari e Assenze
+# Parametri Orari e Assenze (CORRETTO PER EVITARE ERRORE)
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'pausa_inizio' not in st.session_state: st.session_state.pausa_inizio = time(13, 0)
 if 'pausa_fine' not in st.session_state: st.session_state.pausa_fine = time(14, 0)
-if 'ferie' not in st.session_state: st.session_state.ferie = []
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
+
+# Inizializziamo le ferie come un intervallo (oggi - oggi) per evitare il crash
+if 'ferie' not in st.session_state: 
+    st.session_state.ferie = (datetime.now().date(), datetime.now().date())
 
 # --- 4. LOGICA CALCOLO GIRO ---
 def calcola_piano():
