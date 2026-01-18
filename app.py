@@ -273,9 +273,17 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     if st.button("🔄 Forza Ricarica Cloud"): st.cache_data.clear(); st.rerun()
 
 # --- TAB: AGENDA (CON FRECCE DI NAVIGAZIONE) ---
-elif st.session_state.active_tab == "📅 Agenda":  # <--- Cambiato qui
+elif st.session_state.active_tab == "📅 Agenda":
     weeks = list(agenda.keys())
     
+    # Calcolo delle date per la settimana selezionata
+    # Partiamo dal lunedì di base e aggiungiamo le settimane corrispondenti all'indice attuale
+    data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
+    data_venerdi = data_lunedi + timedelta(days=4)
+    
+    # Formattazione stringa date (es. 19/01 al 23/01)
+    range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
+
     # Header di Navigazione
     col_prev, col_title, col_next = st.columns([1, 2, 1])
     
@@ -285,7 +293,10 @@ elif st.session_state.active_tab == "📅 Agenda":  # <--- Cambiato qui
             st.rerun()
             
     with col_title:
-        st.markdown(f"<h3 style='text-align: center;'>📅 {weeks[st.session_state.current_week_index]} di 8</h3>", unsafe_allow_html=True)
+        # Titolo principale
+        st.markdown(f"<h3 style='text-align: center; margin-bottom: 0;'>📅 {weeks[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
+        # Sottotitolo con le date esatte
+        st.markdown(f"<p style='text-align: center; color: #666; font-size: 1.1em;'>{range_date}</p>", unsafe_allow_html=True)
         
     with col_next:
         if st.button("Successiva ➡️", disabled=(st.session_state.current_week_index == 7), use_container_width=True):
@@ -293,6 +304,10 @@ elif st.session_state.active_tab == "📅 Agenda":  # <--- Cambiato qui
             st.rerun()
 
     st.divider()
+    
+    # --- Rimanente codice dei giorni (invariato) ---
+    sett_scelta = weeks[st.session_state.current_week_index]
+    # ... segue il resto del tuo codice per la visualizzazione delle colonne Lun, Mar, etc.
     
     # Renderizzazione Giorni
     sett_scelta = weeks[st.session_state.current_week_index]
