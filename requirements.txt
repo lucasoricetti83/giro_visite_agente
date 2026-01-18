@@ -6,3 +6,5 @@ openpyxl
 xlsxwriter
 st-gsheets-connection
 google-auth
+folium
+streamlit-folium
