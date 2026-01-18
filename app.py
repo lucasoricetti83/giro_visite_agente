@@ -40,7 +40,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def get_coords(address):
     try:
-        geolocator = Nominatim(user_agent="giro_visite_v15_pro")
+        geolocator = Nominatim(user_agent="giro_visite_v16_italy")
         location = geolocator.geocode(address, timeout=10)
         return (location.latitude, location.longitude) if location else None
     except: return None
@@ -78,13 +78,12 @@ if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud[
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
 # Parametri Default
-if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
-if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
-if 'pausa_inizio' not in st.session_state: st.session_state.pausa_inizio = time(13, 0)
-if 'pausa_fine' not in st.session_state: st.session_state.pausa_fine = time(14, 0)
-if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
-if 'ferie' not in st.session_state: st.session_state.ferie = (datetime.now().date(), datetime.now().date())
-if 'spostamenti' not in st.session_state: st.session_state.spostamenti = {}
+for key, val in {
+    'h_inizio': time(9, 0), 'h_fine': time(18, 0),
+    'pausa_inizio': time(13, 0), 'pausa_fine': time(14, 0),
+    'durata_v': 45, 'ferie': (datetime.now().date(), datetime.now().date())
+}.items():
+    if key not in st.session_state: st.session_state[key] = val
 
 # --- 4. LOGICA CALCOLO GIRO ---
 def calcola_piano():
@@ -100,9 +99,7 @@ def calcola_piano():
             if dt_c in st.session_state.ferie: continue
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             
-            # Appuntamenti
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
-            # Giro
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
             
@@ -116,6 +113,7 @@ def calcola_piano():
                         agenda_risultato[f"Settimana {s}"][g].append(px)
                         o_s, p_s = ora_app + timedelta(minutes=st.session_state.durata_v), (px['latitude'], px['longitude'])
                         appuntamenti = appuntamenti.iloc[1:]; continue
+
                 if not urg: break
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
                 dist = haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])
@@ -167,7 +165,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita per oggi.")
 
-# --- TAB: MAPPA ---
+# --- TAB: MAPPA CLIENTI ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Analisi Geografica")
     filtro_tipo = st.radio("Filtro:", ["Tutti i Clienti", "Visitati", "Mai Visitati", "Singolo Cliente"], horizontal=True)
@@ -175,8 +173,8 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     if filtro_tipo == "Visitati": df_mappa = df_mappa[df_mappa['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_mappa = df_mappa[df_mappa['ultima visita'] <= pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Singolo Cliente":
-        cliente_filtro = st.selectbox("Scegli cliente:", sorted(df_mappa['nome cliente'].unique()))
-        df_mappa = df_mappa[df_mappa['nome cliente'] == cliente_filtro]
+        cli = st.selectbox("Scegli cliente:", sorted(df_mappa['nome cliente'].unique()))
+        df_mappa = df_mappa[df_mappa['nome cliente'] == cli]
     df_mappa['color'] = df_mappa['visitare'].apply(lambda x: "#28a745" if x == "SI" else "#dc3545")
     st.map(df_mappa, latitude='latitude', longitude='longitude', color='color', size=25)
 
@@ -184,7 +182,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
-    scelto = st.selectbox("Seleziona cliente:", nomi)
+    scelto = st.selectbox("Cerca cliente:", nomi)
     if scelto:
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
@@ -192,7 +190,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         # AZIONI RAPIDE
         c_act = st.columns(4)
         c_act[0].link_button("🚗 NAVIGA", f"https://www.google.com/maps/dir/?api=1&destination={d['latitude']},{d['longitude']}")
-        if d.get('cellulare'): c_act[1].link_button("📱 CHIAMA", f"tel:{d['cellulare']}")
+        if d.get('cellulare'): c_act[1].link_button("📱 CELL", f"tel:{d['cellulare']}")
         if d.get('mail'): c_act[2].link_button("📧 MAIL", f"mailto:{d['mail']}")
 
         with st.form("edit_anag"):
@@ -200,7 +198,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
             ui = c1.text_input("Indirizzo", d['indirizzo'])
             uf = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)']))
-            scelta_v = c1.selectbox("Includere nel Giro?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
+            scelta_v = c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut = c2.text_input("Telefono", d.get('telefono', ''))
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
             um = c2.text_input("Email", d.get('mail',''))
@@ -209,28 +207,26 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             app_t = c1.time_input("Ora Appuntamento", value=d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0))
             rimuovi = c2.checkbox("Rimuovi appuntamento")
             uno = st.text_area("Note", d.get('note', ''))
-            if st.form_submit_button("💾 Salva Modifiche"):
+            if st.form_submit_button("💾 Salva"):
                 st.session_state.df_master.at[idx, ['nome cliente','indirizzo','frequenza (giorni)','visitare','telefono','cellulare','mail','note']] = [un,ui,uf,scelta_v,ut,uc,um,uno]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
-                if save_to_gsheets(st.session_state.df_master): st.rerun()
+                save_to_gsheets(st.session_state.df_master); st.rerun()
         
         st.divider()
         with st.expander("🗑️ ELIMINA CLIENTE"):
-            if st.checkbox("Confermo eliminazione definitiva") and st.button("❌ CANCELLA ORA"):
+            if st.checkbox("Confermo eliminazione") and st.button("❌ ELIMINA ORA"):
                 st.session_state.df_master = st.session_state.df_master.drop(idx)
-                if save_to_gsheets(st.session_state.df_master): st.rerun()
+                save_to_gsheets(st.session_state.df_master); st.rerun()
 
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
-    
-    st.subheader("📍 Posizione Attuale (iPad/Chrome)")
     c_gps, c_st = st.columns([1, 2])
     pos_new = None
     with c_gps:
-        if st.button("🎯 USA POSIZIONE ATTUALE", key="gps_new_btn"):
-            pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v15')
+        if st.button("🎯 USA POSIZIONE ATTUALE", key="gps_new"):
+            pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v16')
     if pos_new: st.success("✅ GPS Acquisito!")
 
     with st.form("new_full"):
@@ -240,7 +236,6 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         ut = c2.text_input("Telefono Fisso")
         uc = c2.text_input("Cellulare")
         um = c2.text_input("Email")
-        
         st.divider()
         st.subheader("🏠 Indirizzo Dettagliato")
         via = st.text_input("Via e Civico")
@@ -249,35 +244,34 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         cit = ca_row[1].text_input("Città *")
         pro = ca_row[2].text_input("Prov.")
         no = st.text_area("Note iniziali")
-
         if st.form_submit_button("✅ CREA E SALVA"):
             if nn and (cit or pos_new):
-                ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ")
+                ind = f"{via}, {cap} {cit} {pro}".strip(", ")
                 lat, lon = (pos_new['latitude'], pos_new['longitude']) if pos_new else (None, None)
                 if not lat:
-                    coords = get_coords(ind_comp)
+                    coords = get_coords(ind)
                     if coords: lat, lon = coords
-                
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': no, 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind, 'visitare': 'SI', 'frequenza (giorni)': nf, 'cellulare': uc, 'telefono': ut, 'mail': um, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01')}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                    if save_to_gsheets(st.session_state.df_master): st.success("Salvato!"); st.rerun()
-                else: st.error("Impossibile geolocalizzare.")
+                    save_to_gsheets(st.session_state.df_master); st.rerun()
+                else: st.error("Impossibile localizzare.")
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
-    st.subheader("📍 Partenza")
+    
+    st.subheader("📍 Punto di Partenza")
     c_gps, c_city = st.columns([1, 2])
     with c_gps:
-        if st.button("🎯 USA GPS ATTUALE", key="gps_param_btn"):
-            gps_p = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_param_v15')
+        if st.button("🎯 USA GPS", key="gps_p"):
+            gps_p = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_p_v16')
             if gps_p:
-                if save_config_cloud("Posizione GPS", gps_p['latitude'], gps_p['longitude']):
-                    st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = gps_p['latitude'], gps_p['longitude'], "Posizione GPS"
-                    st.rerun()
+                save_config_cloud("Posizione GPS", gps_p['latitude'], gps_p['longitude'])
+                st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = gps_p['latitude'], gps_p['longitude'], "Posizione GPS"
+                st.rerun()
     with c_city:
-        nc = st.text_input("Città di Partenza:", st.session_state.start_city)
+        nc = st.text_input("Scrivi Città:", st.session_state.start_city)
         if nc != st.session_state.start_city and nc != "Posizione GPS":
             co = get_coords(nc)
             if co and save_config_cloud(nc, co[0], co[1]):
@@ -299,7 +293,17 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     if isinstance(ferie_in, tuple) and len(ferie_in) == 2: st.session_state.ferie = ferie_in
 
     st.divider()
-    if st.button("🔄 Forza Ricarica Database"): st.cache_data.clear(); st.rerun()
+    st.subheader("📊 Gestione Dati")
+    # --- ESPORTAZIONE EXCEL (RIPRISTINATA) ---
+    def to_excel(df):
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        return out.getvalue()
+    
+    c_ex1, c_ex2 = st.columns(2)
+    c_ex1.download_button(label="📥 Scarica Database Excel", data=to_excel(st.session_state.df_master), file_name="crm_giro_visite.xlsx")
+    if c_ex2.button("🔄 Forza Ricarica Cloud"): st.cache_data.clear(); st.rerun()
 
 # --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
