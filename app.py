@@ -294,54 +294,50 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.download_button(label="📥 Scarica Database Excel", data=to_excel(st.session_state.df_master), file_name="crm_giro_visite.xlsx")
     if st.button("🔄 Forza Ricarica Cloud"): st.cache_data.clear(); st.rerun()
 
-# --- TAB: AGENDA (CON FRECCE DI NAVIGAZIONE) ---
+# --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda":
-    weeks = list(agenda.keys())
+    # Recuperiamo i dati (ora la funzione restituisce 3 valori)
+    agenda, lun_ref_calcolato, etichette_settimane = calcola_piano()
     
     # Calcolo delle date per la settimana selezionata
-    # Partiamo dal lunedì di base e aggiungiamo le settimane corrispondenti all'indice attuale
-    data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
+    data_lunedi = lun_ref_calcolato + timedelta(weeks=st.session_state.current_week_index)
     data_venerdi = data_lunedi + timedelta(days=4)
-    
-    # Formattazione stringa date (es. 19/01 al 23/01)
     range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
 
     # Header di Navigazione
     col_prev, col_title, col_next = st.columns([1, 2, 1])
     
     with col_prev:
+        # Disabilitato se siamo alla prima settimana passata (indice 0)
         if st.button("⬅️ Precedente", disabled=(st.session_state.current_week_index == 0), use_container_width=True):
             st.session_state.current_week_index -= 1
             st.rerun()
             
     with col_title:
-        # Titolo principale
-        st.markdown(f"<h3 style='text-align: center; margin-bottom: 0;'>📅 {weeks[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
-        # Sottotitolo con le date esatte
+        titolo_sett = etichette_settimane[st.session_state.current_week_index]
+        st.markdown(f"<h3 style='text-align: center; margin-bottom: 0;'>📅 {titolo_sett}</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='text-align: center; color: #666; font-size: 1.1em;'>{range_date}</p>", unsafe_allow_html=True)
         
     with col_next:
-        if st.button("Successiva ➡️", disabled=(st.session_state.current_week_index == 7), use_container_width=True):
+        # Disabilitato se siamo all'ultima settimana (indice 10)
+        if st.button("Successiva ➡️", disabled=(st.session_state.current_week_index == 10), use_container_width=True):
             st.session_state.current_week_index += 1
             st.rerun()
 
     st.divider()
     
-    # --- Rimanente codice dei giorni (invariato) ---
-    sett_scelta = weeks[st.session_state.current_week_index]
-    # ... segue il resto del tuo codice per la visualizzazione delle colonne Lun, Mar, etc.
-    
     # Renderizzazione Giorni
-    sett_scelta = weeks[st.session_state.current_week_index]
     cols = st.columns(5)
     g_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven"]
     for i, g in enumerate(g_nomi):
+        data_giorno = data_lunedi + timedelta(days=i)
         with cols[i]:
-            st.subheader(g)
-            for t in agenda[sett_scelta][i]:
+            # Mostriamo anche il numero del giorno (es. Lun 19)
+            st.subheader(f"{g} {data_giorno.day}")
+            for t in agenda[st.session_state.current_week_index][i]:
                 with st.container(border=True):
                     st.caption(f"🕒 {t['ora_arrivo']}")
-                    if st.button(t['nome cliente'], key=f"btn_{sett_scelta}_{i}_{t['nome cliente']}", use_container_width=True):
+                    if st.button(t['nome cliente'], key=f"btn_agg_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
                         st.session_state.cliente_selezionato = t['nome cliente']
                         st.session_state.active_tab = "👤 Anagrafica"
                         st.rerun()
