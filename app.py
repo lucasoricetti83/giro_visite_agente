@@ -87,15 +87,31 @@ for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': 
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi_dt = datetime.now()
-    lun_ref = oggi_dt - timedelta(days=oggi_dt.weekday())
-    df_sim = st.session_state.df_master.copy()
-    agenda_risultato = {f"Settimana {i}": {g: [] for g in range(5)} for i in range(1, 9)}
     
-    for s in range(1, 9):
+    # Il lunedì di riferimento non è più quello di oggi, ma quello di 2 settimane fa
+    lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
+    lun_ref = lun_corrente - timedelta(weeks=2) 
+    
+    df_sim = st.session_state.df_master.copy()
+    
+    # Creiamo 11 settimane: 2 passate, quella corrente, e 8 future
+    agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
+    
+    # Nomi per le etichette delle settimane
+    etichette = []
+    for i in range(11):
+        if i < 2: etichette.append(f"Passata (-{2-i})")
+        elif i == 2: etichette.append("Settimana Corrente")
+        else: etichette.append(f"Futura (+{i-2})")
+    
+    for s in range(11):
         for g in range(5):
-            dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
+            dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
             if dt_c in st.session_state.ferie: continue
+            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
+            
+            # Filtro appuntamenti e urgenze
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
@@ -107,26 +123,31 @@ def calcola_piano():
                     if o_s >= ora_app - timedelta(minutes=st.session_state.durata_v + 15):
                         px['ora_arrivo'] = ora_app.strftime("%H:%M")
                         px['tipo_tappa'] = "📌 APPUNTAMENTO"
-                        agenda_risultato[f"Settimana {s}"][g].append(px)
+                        agenda_risultato[s][g].append(px)
                         o_s, p_s = ora_app + timedelta(minutes=st.session_state.durata_v), (px['latitude'], px['longitude'])
                         appuntamenti = appuntamenti.iloc[1:]; continue
+                
                 if not urg: break
                 px = min(urg, key=lambda x: haversine(p_s[0], p_s[1], x['latitude'], x['longitude']))
                 dist = haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])
                 arr = o_s + timedelta(minutes=(dist/50)*60)
+                
                 if arr >= datetime.combine(dt_c, st.session_state.pausa_inizio) and arr < datetime.combine(dt_c, st.session_state.pausa_fine):
                     o_s = datetime.combine(dt_c, st.session_state.pausa_fine); continue
+                
                 fine_v = arr + timedelta(minutes=st.session_state.durata_v)
                 limite = appuntamenti.iloc[0]['appuntamento'].to_pydatetime() if not appuntamenti.empty else datetime.combine(dt_c, st.session_state.h_fine)
+                
                 if fine_v <= limite:
                     px['ora_arrivo'] = arr.strftime("%H:%M")
                     px['tipo_tappa'] = "🚗 Giro"
-                    agenda_risultato[f"Settimana {s}"][g].append(px)
+                    agenda_risultato[s][g].append(px)
                     df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_c)
                     o_s, p_s = fine_v, (px['latitude'], px['longitude'])
                     urg.remove(px)
                 else: break
-    return agenda_risultato, lun_ref
+                
+    return agenda_risultato, lun_ref, etichette
 
 # --- 5. INTERFACCIA ---
 nav = st.columns(6)
