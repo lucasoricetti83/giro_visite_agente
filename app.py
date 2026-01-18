@@ -16,7 +16,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- FUNZIONI DI SALVATAGGIO ---
 def save_to_gsheets(df):
     try:
-        # Pulizia colonne di calcolo prima del salvataggio nel cloud
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo', 'tipo_tappa', 'color']]
         conn.update(spreadsheet=URL_FOGLIO, data=df[cols_to_save])
         st.cache_data.clear() 
@@ -40,7 +39,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def get_coords(address):
     try:
-        geolocator = Nominatim(user_agent="giro_visite_v21_pro")
+        geolocator = Nominatim(user_agent="giro_visite_v22_pro")
         location = geolocator.geocode(address, timeout=10)
         return (location.latitude, location.longitude) if location else None
     except: return None
@@ -70,6 +69,7 @@ def fetch_config():
 
 # --- 3. STATO DELL'APP ---
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
+if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 
 conf_cloud = fetch_config()
@@ -77,7 +77,7 @@ if 'start_city' not in st.session_state: st.session_state.start_city = conf_clou
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
-# Parametri Default (Ripristinati e protetti)
+# Parametri Default
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'pausa_inizio' not in st.session_state: st.session_state.pausa_inizio = time(13, 0)
@@ -97,7 +97,6 @@ def calcola_piano():
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
             if dt_c in st.session_state.ferie: continue
-            
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
@@ -179,8 +178,17 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
     nomi = sorted(st.session_state.df_master['nome cliente'].unique())
-    scelto = st.selectbox("Cerca cliente:", nomi)
+    
+    # Logica per auto-selezionare il cliente se arriviamo dall'agenda
+    idx_default = 0
+    if st.session_state.cliente_selezionato in nomi:
+        idx_default = nomi.index(st.session_state.cliente_selezionato)
+    
+    scelto = st.selectbox("Cerca cliente:", nomi, index=idx_default)
+    
     if scelto:
+        # Reset del trigger dopo la selezione
+        st.session_state.cliente_selezionato = scelto
         idx = st.session_state.df_master[st.session_state.df_master['nome cliente'] == scelto].index[0]
         d = st.session_state.df_master.loc[idx]
         
@@ -215,22 +223,19 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         
         st.divider()
         with st.expander("🗑️ ELIMINA CLIENTE"):
-            if st.checkbox("Confermo cancellazione definitiva") and st.button("❌ ELIMINA ORA"):
+            if st.checkbox("Confermo la cancellazione definitiva") and st.button("❌ ELIMINA ORA"):
                 st.session_state.df_master = st.session_state.df_master.drop(idx)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
 
-# --- TAB: NUOVO CLIENTE (STESSO PULSANTE GPS DI PARAMETRI) ---
+# --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
-    
-    # PULSANTE GPS IDENTICO A QUELLO DEI PARAMETRI
     st.subheader("📍 Punto di Partenza")
     c_gps, c_st = st.columns([1, 2])
     pos_new = None
     with c_gps:
         if st.button("🎯 USA POSIZIONE GPS ATTUALE", key="gps_new_btn"):
             pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v21')
-    
     if pos_new: st.success(f"✅ GPS acquisito!")
 
     with st.form("new_full"):
@@ -248,7 +253,6 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         cit = ca_row[1].text_input("Città *")
         pro = ca_row[2].text_input("Prov.")
         no = st.text_area("Note iniziali")
-
         if st.form_submit_button("✅ CREA E SALVA"):
             if nn and (cit or pos_new):
                 ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ")
@@ -256,7 +260,6 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 if not lat:
                     coords = get_coords(ind_comp)
                     if coords: lat, lon = coords
-                
                 if lat:
                     nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': no, 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
@@ -303,19 +306,24 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='openpyxl') as writer: df.to_excel(writer, index=False)
         return out.getvalue()
-    
     c_ex1, c_ex2 = st.columns(2)
     c_ex1.download_button(label="📥 Scarica Database Excel", data=to_excel(st.session_state.df_master), file_name="crm_giro_visite.xlsx")
     if c_ex2.button("🔄 Forza Ricarica Cloud"): st.cache_data.clear(); st.rerun()
 
-# --- TAB: AGENDA ---
+# --- TAB: AGENDA (MODIFICATA CON PULSANTI CLICCABILI) ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
     st.header("📅 Prossime Settimane")
     sett = st.selectbox("Settimana", list(agenda.keys()))
     cols = st.columns(5)
-    for i, g in enumerate(["Lun", "Mar", "Mer", "Gio", "Ven"]):
+    g_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven"]
+    for i, g in enumerate(g_nomi):
         with cols[i]:
             st.subheader(g)
             for t in agenda[sett][i]:
                 with st.container(border=True):
-                    st.write(f"**{t['ora_arrivo']}** - {t['nome cliente']}")
+                    # Il nome del cliente diventa un pulsante
+                    st.caption(f"🕒 {t['ora_arrivo']}")
+                    if st.button(t['nome cliente'], key=f"btn_agenda_{sett}_{i}_{t['nome cliente']}", use_container_width=True):
+                        st.session_state.cliente_selezionato = t['nome cliente']
+                        st.session_state.active_tab = "👤 Anagrafica"
+                        st.rerun()
