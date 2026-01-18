@@ -40,12 +40,11 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * 6371 * asin(sqrt(sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2))
 
 def get_coords(address):
-    """Cerca le coordinate aggiungendo sempre 'Italia' per precisione"""
+    """Cerca le coordinate con timeout lungo e user_agent dedicato"""
     try:
-        geolocator = Nominatim(user_agent="giro_visite_v24_pro_italy")
-        # Aggiungo Italia per restringere il campo di ricerca
-        search_query = f"{address}, Italia"
-        location = geolocator.geocode(search_query, timeout=10)
+        geolocator = Nominatim(user_agent="giro_visite_agente_v25")
+        # Aggiungiamo sempre 'Italia' per evitare risultati all'estero
+        location = geolocator.geocode(f"{address}, Italia", timeout=10)
         return (location.latitude, location.longitude) if location else None
     except: return None
 
@@ -172,7 +171,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    st.info("📱 iPad/iPhone: Clicca una volta sul punto per vedere il nome, clicca una seconda volta per entrare nell'anagrafica.")
     
     filtro_tipo = st.radio("Filtro clienti:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=True)
     df_m = st.session_state.df_master.copy()
@@ -199,7 +197,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
             else:
                 st.session_state.last_map_click = clicked_name
                 st.toast(f"Selezionato: {clicked_name}. Tocca di nuovo per aprire.", icon="👤")
-    else: st.warning("Nessun cliente da mostrare.")
+    else: st.warning("Nessun cliente trovato.")
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
@@ -238,12 +236,11 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 st.session_state.df_master = st.session_state.df_master.drop(idx)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
 
-# --- TAB: NUOVO CLIENTE ---
+# --- TAB: NUOVO CLIENTE (MODALITÀ TOLLERANTE) ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
     
-    # Sezione GPS
-    if st.button("🎯 USA POSIZIONE GPS ATTUALE", key="gps_new_btn"):
+    if st.button("🎯 USA POSIZIONE GPS ATTUALE"):
         pos_new = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_new_v21')
         if pos_new: st.session_state.new_coords = (pos_new['latitude'], pos_new['longitude'])
 
@@ -256,54 +253,49 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         ca_row = st.columns([1, 2, 1])
         cap, cit, pro = ca_row[0].text_input("CAP"), ca_row[1].text_input("Città *"), ca_row[2].text_input("Prov.")
         st.divider()
-        
-        # Opzione manuale se tutto fallisce
-        st.write("🆘 Se l'indirizzo non viene trovato, inserisci qui le coordinate manuali:")
-        m_lat = st.text_input("Latitudine (es: 43.1234)")
-        m_lon = st.text_input("Longitudine (es: 12.1234)")
+        m_lat = st.text_input("Latitudine Manuale (opzionale)")
+        m_lon = st.text_input("Longitudine Manuale (opzionale)")
 
         if st.form_submit_button("✅ CREA E SALVA"):
-            if nn and (cit or m_lat):
+            if nn and cit:
                 ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ").strip()
                 lat, lon = None, None
 
-                # 1. Prova GPS Attuale
-                if 'new_coords' in st.session_state:
+                # 1. Coordinate Manuali o GPS
+                if m_lat and m_lon:
+                    lat, lon = float(m_lat), float(m_lon)
+                elif 'new_coords' in st.session_state:
                     lat, lon = st.session_state.new_coords
                 
-                # 2. Prova inserimento Manuale
-                elif m_lat and m_lon:
-                    lat, lon = float(m_lat), float(m_lon)
-
-                # 3. Prova ricerca Automatica (Cascata)
+                # 2. Ricerca Automatica Graduale (MODALITÀ TOLLERANTE)
                 else:
-                    with st.spinner("Ricerca posizione in corso..."):
-                        # Prova 1: Indirizzo Completo
+                    with st.spinner("Cerco la posizione..."):
+                        # Prova A: Indirizzo Completo
                         lat, lon = get_coords(ind_comp) or (None, None)
-                        if not lat:
-                            # Prova 2: Via e Città
+                        if not lat and via:
+                            # Prova B: Solo Via e Città (ignora errori civico)
                             lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat:
-                            # Prova 3: Solo Città
+                            # Prova C: Solo Città (Posizione sicura)
                             lat, lon = get_coords(cit) or (None, None)
 
                 if lat:
                     nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
-                        st.success(f"✅ {nn} registrato!")
+                        st.success("✅ Cliente salvato!")
                         if 'new_coords' in st.session_state: del st.session_state.new_coords
                         st.rerun()
                 else:
-                    st.error(f"❌ Impossibile trovare '{ind_comp}'. Verifica la città o usa le coordinate manuali.")
+                    st.error("❌ Impossibile trovare la città. Controlla come l'hai scritta.")
             else:
-                st.warning("⚠️ Ragione Sociale e Città sono obbligatori.")
+                st.warning("⚠️ Nome e Città sono obbligatori.")
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     st.subheader("📍 Punto di Partenza")
-    if st.button("🎯 USA GPS ATTUALE", key="gps_param"):
+    if st.button("🎯 USA GPS ATTUALE"):
         gps_p = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((pos) => { return pos.coords; })', target_id='gps_param_v21')
         if gps_p:
             if save_config_cloud("Posizione GPS", gps_p['latitude'], gps_p['longitude']):
@@ -333,7 +325,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 
 # --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda":
-    agenda, lun_ref_calcolato, etichette_settimane = calcola_piano()
+    agenda, lun_base_calcolato, etichette_settimane = calcola_piano()
     data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     data_venerdi = data_lunedi + timedelta(days=4)
     range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
