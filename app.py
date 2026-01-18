@@ -212,10 +212,9 @@ elif st.session_state.active_tab == "👤 Anagrafica":
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     
-    # 1. GEOLOCALIZZAZIONE E PARTENZA PERSISTENTE
-    st.subheader("📍 Punto di Partenza (Sincronizzato Cloud)")
+    # 1. GEOLOCALIZZAZIONE
+    st.subheader("📍 Punto di Partenza (Cloud)")
     c_gps, c_city = st.columns([1, 2])
-    
     with c_gps:
         if st.button("🎯 Rileva GPS"):
             pos = streamlit_js_eval(js_expressions='navigator.geolocation.getCurrentPosition((position) => { return position.coords; })', target_id='gps_p')
@@ -225,15 +224,13 @@ elif st.session_state.active_tab == "⚙️ Parametri":
                     st.session_state.start_lat, st.session_state.start_lon, st.session_state.start_city = lat, lon, "Posizione GPS"
                     st.success("📍 GPS salvato!")
                     st.rerun()
-
     with c_city:
-        nc = st.text_input("Cambia Città di Partenza:", st.session_state.start_city)
+        nc = st.text_input("Cambia Città:", st.session_state.start_city)
         if nc != st.session_state.start_city and nc != "Posizione GPS":
             co = get_coords(nc)
             if co:
                 if save_config_cloud(nc, co[0], co[1]):
                     st.session_state.start_city, st.session_state.start_lat, st.session_state.start_lon = nc, co[0], co[1]
-                    st.success(f"📍 Partenza fissata a {nc}!")
                     st.rerun()
 
     st.divider()
@@ -248,30 +245,43 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.session_state.pausa_inizio = cp1.time_input("Inizio Pausa Pranzo", st.session_state.pausa_inizio)
     st.session_state.pausa_fine = cp2.time_input("Fine Pausa Pranzo", st.session_state.pausa_fine)
     
-    st.session_state.durata_v = st.slider("Minuti per ogni visita", 15, 120, st.session_state.durata_v)
+    st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
 
     st.divider()
 
-    # 3. FERIE E ASSENZE
+    # 3. FERIE (VERSIONE CORRETTA PER EVITARE CRASH)
     st.subheader("🏖️ Giorni di Chiusura / Ferie")
-    ferie_sel = st.date_input("Seleziona i giorni in cui NON lavori", value=st.session_state.ferie)
-    st.session_state.ferie = ferie_sel if isinstance(ferie_sel, list) else [ferie_sel]
+    ferie_input = st.date_input(
+        "Seleziona il periodo di ferie (Inizio e Fine)", 
+        value=st.session_state.ferie
+    )
+    # Aggiorna lo stato solo se l'utente seleziona un intervallo completo
+    if isinstance(ferie_input, tuple) and len(ferie_input) == 2:
+        st.session_state.ferie = ferie_input
 
     st.divider()
 
-    # 4. ESPORTAZIONE EXCEL
-    st.subheader("📊 Esportazione")
+    # 4. ESPORTAZIONE EXCEL E RICARICAMENTO (RIPRISTINATI)
+    st.subheader("📊 Gestione Dati")
+    
     def to_excel(df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         return out.getvalue()
-    st.download_button("📥 Scarica Database Excel", to_excel(st.session_state.df_master), "database_crm.xlsx")
-
-    if st.button("🔄 Ricarica forzata Cloud"):
-        st.cache_data.clear()
-        st.rerun()
-
+    
+    col_ex1, col_ex2 = st.columns(2)
+    with col_ex1:
+        st.download_button(
+            label="📥 Scarica Database Excel",
+            data=to_excel(st.session_state.df_master),
+            file_name="database_giro_visite.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    with col_ex2:
+        if st.button("🔄 Forza Ricaricamento Cloud"):
+            st.cache_data.clear()
+            st.rerun()
 # --- ALTRE TAB ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
     st.header("📅 Agenda")
