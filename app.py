@@ -51,6 +51,7 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
+        # Assicuriamo che la colonna 'contatto' sia gestita
         colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
             if col not in df.columns: df[col] = ""
@@ -210,7 +211,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
                 st.session_state.last_map_click = clicked_name; st.toast(f"Tocca di nuovo: {clicked_name}")
     else: st.warning("Nessun cliente trovato.")
 
-# --- TAB: ANAGRAFICA (CON NUOVA FUNZIONE REPORT) ---
+# --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
@@ -260,6 +261,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.form("edit_anag"):
             c1, c2 = st.columns(2)
             un, ui = c1.text_input("Ragione Sociale", d['nome cliente']), c1.text_input("Indirizzo", d['indirizzo'])
+            uco = c1.text_input("Contatti", d.get('contatto', '')) # VOCE AGGIUNTA
             uf, scelta_v = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)'])), c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut, uc, um = c2.text_input("Telefono", d.get('telefono', '')), c2.text_input("Cellulare", d.get('cellulare','')), c2.text_input("Email", d.get('mail',''))
             st.divider()
@@ -268,7 +270,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             rimuovi = c2.checkbox("Rimuovi appuntamento")
             uno = st.text_area("Note Storiche", d.get('note', ''))
             if st.form_submit_button("💾 Salva Modifiche Anagrafiche"):
-                st.session_state.df_master.at[idx, ['nome cliente','indirizzo','frequenza (giorni)','visitare','telefono','cellulare','mail','note']] = [un,ui,uf,scelta_v,ut,uc,um,uno]
+                st.session_state.df_master.at[idx, ['nome cliente','indirizzo','frequenza (giorni)','visitare','telefono','cellulare','mail','note','contatto']] = [un,ui,uf,scelta_v,ut,uc,um,uno,uco]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
@@ -291,6 +293,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn, nf = c1.text_input("Ragione Sociale *"), c1.number_input("Frequenza Visite (gg)", value=30)
+        nco = c1.text_input("Contatti") # VOCE AGGIUNTA
         ut, uc, um = c2.text_input("Telefono"), c2.text_input("Cellulare"), c2.text_input("Email")
         st.divider()
         via = st.text_input("Via e Civico")
@@ -311,7 +314,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT, 'contatto': nco}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success("✅ Cliente salvato!"); st.rerun()
