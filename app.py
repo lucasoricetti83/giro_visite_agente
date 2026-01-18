@@ -74,6 +74,7 @@ if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Gir
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 2
+if 'last_map_click' not in st.session_state: st.session_state.last_map_click = None
 
 conf_cloud = fetch_config()
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
@@ -165,36 +166,46 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita prevista per oggi.")
 
-# --- TAB: MAPPA (Versione ottimizzata per il file requirements) ---
+# --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    st.info("💡 Clicca sul segnaposto di un cliente per aprire la sua scheda.")
+    st.info("📱 iPad/iPhone: Clicca una volta sul punto per vedere il nome, clicca una seconda volta per entrare nell'anagrafica.")
     
     filtro_tipo = st.radio("Filtro clienti:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=True)
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
     
-    # Centro la mappa sulla media delle coordinate
+    # Centro la mappa
     m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
     
     for _, row in df_m.iterrows():
         color = "green" if row['visitare'] == "SI" else "red"
         folium.Marker(
             location=[row['latitude'], row['longitude']],
-            tooltip=row['nome cliente'], # Nome visibile al passaggio del mouse
-            popup=row['nome cliente'],  # Nome visibile al click
+            popup=row['nome cliente'],
+            tooltip=row['nome cliente'],
             icon=folium.Icon(color=color, icon="user", prefix="fa")
         ).add_to(m)
 
-    # Visualizzazione
-    output = st_folium(m, width=1200, height=600)
-
-    # Se clicco su un cliente, vado all'anagrafica
-    if output.get("last_object_clicked_popup"):
-        st.session_state.cliente_selezionato = output["last_object_clicked_popup"]
-        st.session_state.active_tab = "👤 Anagrafica"
-        st.rerun()
+    # Visualizzazione Mappa
+    output = st_folium(m, width="100%", height=600, key="main_map")
+    
+    # LOGICA DOPPIO CLICK (Conferma navigazione)
+    clicked_name = output.get("last_object_clicked_popup")
+    
+    if clicked_name:
+        # Se il nome cliccato è uguale a quello salvato nell'ultimo click, naviga
+        if st.session_state.last_map_click == clicked_name:
+            st.session_state.cliente_selezionato = clicked_name
+            st.session_state.last_map_click = None # Reset dopo la navigazione
+            st.session_state.active_tab = "👤 Anagrafica"
+            st.rerun()
+        else:
+            # Altrimenti salva il nome come "ultimo click" e aspetta il secondo tocco
+            st.session_state.last_map_click = clicked_name
+            # Mostriamo un avviso temporaneo per l'utente mobile
+            st.toast(f"Hai selezionato: {clicked_name}. Tocca di nuovo per aprire la scheda.", icon="👤")
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
