@@ -129,11 +129,11 @@ def calcola_piano():
 
 # --- 5. INTERFACCIA ---
 nav = st.columns(6)
-menu = ["🚀 Giro Oggi", "📅 Agenda 8 Sett", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
+# Modificato da "📅 Agenda 8 Sett" a "📅 Agenda"
+menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
 for i, m in enumerate(menu):
     if nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m; st.rerun()
-
 st.divider()
 agenda, lun_base = calcola_piano()
 
