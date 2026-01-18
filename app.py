@@ -75,24 +75,26 @@ if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Gir
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
 
-# Caricamento posizione persistente
 conf_cloud = fetch_config()
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud['lat']
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 
-# Parametri Orari e Assenze (CORRETTO PER EVITARE ERRORE)
 if 'h_inizio' not in st.session_state: st.session_state.h_inizio = time(9, 0)
 if 'h_fine' not in st.session_state: st.session_state.h_fine = time(18, 0)
 if 'pausa_inizio' not in st.session_state: st.session_state.pausa_inizio = time(13, 0)
 if 'pausa_fine' not in st.session_state: st.session_state.pausa_fine = time(14, 0)
 if 'durata_v' not in st.session_state: st.session_state.durata_v = 45
 
-# Inizializziamo le ferie come un intervallo (oggi - oggi) per evitare il crash
+# Inizializziamo le ferie
 if 'ferie' not in st.session_state: 
     st.session_state.ferie = (datetime.now().date(), datetime.now().date())
 
-# --- 4. LOGICA CALCOLO GIRO ---
+# --- NUOVO: Inizializziamo la memoria degli spostamenti ---
+if 'spostamenti' not in st.session_state:
+    st.session_state.spostamenti = {}
+
+# --- 4. LOGICA CALCOLO GIRO (Aggiornata per Scambio Giorni) ---
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, datetime.now()
     oggi_dt = datetime.now()
@@ -103,14 +105,19 @@ def calcola_piano():
     for s in range(1, 9):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s-1, days=g)).date()
+            
+            # Applica lo scambio logico se presente
+            dt_logica = st.session_state.spostamenti.get(dt_c, dt_c)
+            
             if dt_c in st.session_state.ferie: continue
             
             o_s = datetime.combine(dt_c, st.session_state.h_inizio)
             p_s = (st.session_state.start_lat, st.session_state.start_lon)
             
-            appuntamenti = df_sim[df_sim['appuntamento'].dt.date == dt_c].sort_values('appuntamento')
-            df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
-            urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
+            appuntamenti = df_sim[df_sim['appuntamento'].dt.date == dt_logica].sort_values('appuntamento')
+            df_sim['g_p'] = (pd.to_datetime(dt_logica) - df_sim['ultima visita']).dt.days.fillna(999)
+            
+            urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_logica)].to_dict('records')
             
             while True:
                 if not appuntamenti.empty:
@@ -131,7 +138,6 @@ def calcola_piano():
                 dist = haversine(p_s[0], p_s[1], px['latitude'], px['longitude'])
                 arr = o_s + timedelta(minutes=(dist/50)*60)
                 
-                # Gestione Pausa Pranzo
                 p_inizio = datetime.combine(dt_c, st.session_state.pausa_inizio)
                 p_fine = datetime.combine(dt_c, st.session_state.pausa_fine)
                 if arr >= p_inizio and arr < p_fine:
@@ -145,7 +151,7 @@ def calcola_piano():
                     px['ora_arrivo'] = arr.strftime("%H:%M")
                     px['tipo_tappa'] = "🚗 Giro"
                     agenda_risultato[f"Settimana {s}"][g].append(px)
-                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_c)
+                    df_sim.loc[df_sim['nome cliente'] == px['nome cliente'], 'ultima visita'] = pd.to_datetime(dt_logica)
                     o_s, p_s = fine_v, (px['latitude'], px['longitude'])
                     urg.remove(px)
                 else:
@@ -208,7 +214,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 save_to_gsheets(st.session_state.df_master); st.rerun()
 
-# --- TAB: PARAMETRI (REINTEGRATA COMPLETAMENTE) ---
+# --- TAB: PARAMETRI (COMPLETA) ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
     
@@ -249,21 +255,34 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 
     st.divider()
 
-    # 3. FERIE (VERSIONE CORRETTA PER EVITARE CRASH)
+    # 3. SCAMBIA GIORNATE (RIPRISTINATO)
+    st.subheader("🔄 Scambia Giornate")
+    st.caption("Usa questa funzione per spostare il giro di un giorno su un altro.")
+    col_sc1, col_sc2 = st.columns(2)
+    da_data = col_sc1.date_input("Scambia questo giorno:", value=datetime.now())
+    a_data = col_sc2.date_input("Con questo giorno:", value=datetime.now() + timedelta(days=1))
+    if st.button("Esegui Scambio Giorni"):
+        st.session_state.spostamenti[da_data] = a_data
+        st.session_state.spostamenti[a_data] = da_data
+        st.success(f"Giro del {da_data} scambiato con {a_data}!")
+        st.rerun()
+    if st.session_state.spostamenti:
+        if st.button("Reset Scambi"):
+            st.session_state.spostamenti = {}
+            st.rerun()
+
+    st.divider()
+
+    # 4. FERIE
     st.subheader("🏖️ Giorni di Chiusura / Ferie")
-    ferie_input = st.date_input(
-        "Seleziona il periodo di ferie (Inizio e Fine)", 
-        value=st.session_state.ferie
-    )
-    # Aggiorna lo stato solo se l'utente seleziona un intervallo completo
+    ferie_input = st.date_input("Seleziona il periodo di ferie (Inizio e Fine)", value=st.session_state.ferie)
     if isinstance(ferie_input, tuple) and len(ferie_input) == 2:
         st.session_state.ferie = ferie_input
 
     st.divider()
 
-    # 4. ESPORTAZIONE EXCEL E RICARICAMENTO (RIPRISTINATI)
+    # 5. ESPORTAZIONE EXCEL
     st.subheader("📊 Gestione Dati")
-    
     def to_excel(df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='openpyxl') as writer:
@@ -272,16 +291,12 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     
     col_ex1, col_ex2 = st.columns(2)
     with col_ex1:
-        st.download_button(
-            label="📥 Scarica Database Excel",
-            data=to_excel(st.session_state.df_master),
-            file_name="database_giro_visite.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 Scarica Database Excel", data=to_excel(st.session_state.df_master), file_name="database_giro_visite.xlsx")
     with col_ex2:
         if st.button("🔄 Forza Ricaricamento Cloud"):
             st.cache_data.clear()
             st.rerun()
+
 # --- ALTRE TAB ---
 elif st.session_state.active_tab == "📅 Agenda 8 Sett":
     st.header("📅 Agenda")
