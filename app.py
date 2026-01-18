@@ -71,7 +71,7 @@ def fetch_config():
 if 'active_tab' not in st.session_state: st.session_state.active_tab = "🚀 Giro Oggi"
 if 'cliente_selezionato' not in st.session_state: st.session_state.cliente_selezionato = None
 if 'df_master' not in st.session_state: st.session_state.df_master = fetch_data()
-# Impostiamo l'indice a 2 (che corrisponde alla settimana corrente)
+# L'indice 2 corrisponde alla "Settimana Corrente" (dopo le 2 passate)
 if 'current_week_index' not in st.session_state: st.session_state.current_week_index = 2
 
 conf_cloud = fetch_config()
@@ -85,24 +85,23 @@ for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': 
 
 # --- 4. LOGICA CALCOLO GIRO ---
 def calcola_piano():
-    if st.session_state.df_master.empty: return {}, datetime.now()
+    if st.session_state.df_master.empty: return {}, datetime.now(), []
     oggi_dt = datetime.now()
     
-    # Il lunedì di riferimento non è più quello di oggi, ma quello di 2 settimane fa
+    # Calcolo lunedì di riferimento: oggi -> lunedì corrente -> indietro di 2 settimane
     lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
     lun_ref = lun_corrente - timedelta(weeks=2) 
     
     df_sim = st.session_state.df_master.copy()
     
-    # Creiamo 11 settimane: 2 passate, quella corrente, e 8 future
+    # 11 settimane totali (2 passate + 1 corrente + 8 future)
     agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
     
-    # Nomi per le etichette delle settimane
     etichette = []
     for i in range(11):
-        if i < 2: etichette.append(f"Passata (-{2-i})")
+        if i < 2: etichette.append(f"Settimana Passata (-{2-i})")
         elif i == 2: etichette.append("Settimana Corrente")
-        else: etichette.append(f"Futura (+{i-2})")
+        else: etichette.append(f"Settimana Futura (+{i-2})")
     
     for s in range(11):
         for g in range(5):
@@ -111,7 +110,6 @@ def calcola_piano():
             
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             
-            # Filtro appuntamenti e urgenze
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c)].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c)].to_dict('records')
@@ -151,20 +149,23 @@ def calcola_piano():
 
 # --- 5. INTERFACCIA ---
 nav = st.columns(6)
-# Modificato da "📅 Agenda 8 Sett" a "📅 Agenda"
 menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
 for i, m in enumerate(menu):
     if nav[i].button(m, use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m; st.rerun()
+
 st.divider()
-agenda, lun_base = calcola_piano()
+
+# Esecuzione calcolo e recupero dei 3 valori necessari
+agenda, lun_base, etichette_settimane = calcola_piano()
 
 # --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
     st.header(f"📍 Giro di Oggi")
     idx_g = datetime.now().weekday()
     if idx_g < 5:
-        tappe = agenda["Settimana 1"][idx_g]
+        # Usiamo l'indice 2 (settimana corrente) per il giro di oggi
+        tappe = agenda[2][idx_g]
         if tappe:
             c1, c2 = st.columns([1, 2])
             with c1:
@@ -177,7 +178,9 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                         if cols[3].button("👤", key=f"go_{t['nome cliente']}"):
                             st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
-        else: st.info("Nessuna visita per oggi.")
+        else: st.info("Nessuna visita prevista per oggi.")
+    else:
+        st.info("Oggi è fine settimana, riposati!")
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
@@ -296,11 +299,8 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 
 # --- TAB: AGENDA ---
 elif st.session_state.active_tab == "📅 Agenda":
-    # Recuperiamo i dati (ora la funzione restituisce 3 valori)
-    agenda, lun_ref_calcolato, etichette_settimane = calcola_piano()
-    
-    # Calcolo delle date per la settimana selezionata
-    data_lunedi = lun_ref_calcolato + timedelta(weeks=st.session_state.current_week_index)
+    # Calcolo delle date per la settimana visualizzata
+    data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     data_venerdi = data_lunedi + timedelta(days=4)
     range_date = f"dal {data_lunedi.strftime('%d/%m')} al {data_venerdi.strftime('%d/%m')}"
 
@@ -314,12 +314,13 @@ elif st.session_state.active_tab == "📅 Agenda":
             st.rerun()
             
     with col_title:
+        # Usa la lista etichette_settimane recuperata prima
         titolo_sett = etichette_settimane[st.session_state.current_week_index]
         st.markdown(f"<h3 style='text-align: center; margin-bottom: 0;'>📅 {titolo_sett}</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='text-align: center; color: #666; font-size: 1.1em;'>{range_date}</p>", unsafe_allow_html=True)
         
     with col_next:
-        # Disabilitato se siamo all'ultima settimana (indice 10)
+        # Disabilitato se siamo all'ultima settimana futura (indice 10)
         if st.button("Successiva ➡️", disabled=(st.session_state.current_week_index == 10), use_container_width=True):
             st.session_state.current_week_index += 1
             st.rerun()
@@ -332,8 +333,9 @@ elif st.session_state.active_tab == "📅 Agenda":
     for i, g in enumerate(g_nomi):
         data_giorno = data_lunedi + timedelta(days=i)
         with cols[i]:
-            # Mostriamo anche il numero del giorno (es. Lun 19)
+            # Subheader con numero del giorno
             st.subheader(f"{g} {data_giorno.day}")
+            # Accesso all'agenda tramite l'indice della settimana selezionata
             for t in agenda[st.session_state.current_week_index][i]:
                 with st.container(border=True):
                     st.caption(f"🕒 {t['ora_arrivo']}")
