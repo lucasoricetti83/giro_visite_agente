@@ -165,37 +165,34 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             with c2: st.map(pd.DataFrame(tappe).rename(columns={'latitude':'lat','longitude':'lon'}))
         else: st.info("Nessuna visita prevista per oggi.")
 
-# --- TAB: MAPPA ---
+# --- TAB: MAPPA (Versione ottimizzata per il file requirements) ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    st.write("Clicca sul nome o sul segnaposto per aprire la scheda cliente.")
+    st.info("💡 Clicca sul segnaposto di un cliente per aprire la sua scheda.")
     
     filtro_tipo = st.radio("Filtro clienti:", ["Tutti i Clienti", "Visitati", "Mai Visitati"], horizontal=True)
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
     
-    # Creazione mappa con Folium (Tiles chiari e definiti)
-    m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8, tiles="OpenStreetMap")
+    # Centro la mappa sulla media delle coordinate
+    m = folium.Map(location=[df_m['latitude'].mean(), df_m['longitude'].mean()], zoom_start=8)
     
     for _, row in df_m.iterrows():
         color = "green" if row['visitare'] == "SI" else "red"
-        # Creazione Segnaposto con etichetta nome
         folium.Marker(
             location=[row['latitude'], row['longitude']],
-            popup=row['nome cliente'],
-            tooltip=f"<b>{row['nome cliente']}</b><br>{row['indirizzo']}",
-            icon=folium.Icon(color=color, icon="info-sign")
+            tooltip=row['nome cliente'], # Nome visibile al passaggio del mouse
+            popup=row['nome cliente'],  # Nome visibile al click
+            icon=folium.Icon(color=color, icon="user", prefix="fa")
         ).add_to(m)
 
-    # Visualizzazione Mappa e gestione click
-    map_data = st_folium(m, width="100%", height=600, key="main_map")
-    
-    # Se l'utente clicca su un marker, map_data['last_object_clicked_tooltip'] conterrà il nome
-    if map_data and map_data.get('last_object_clicked_tooltip'):
-        # Pulizia del nome dal tooltip HTML
-        nome_cl = map_data['last_object_clicked_tooltip'].split("</b>")[0].replace("<b>", "")
-        st.session_state.cliente_selezionato = nome_cl
+    # Visualizzazione
+    output = st_folium(m, width=1200, height=600)
+
+    # Se clicco su un cliente, vado all'anagrafica
+    if output.get("last_object_clicked_popup"):
+        st.session_state.cliente_selezionato = output["last_object_clicked_popup"]
         st.session_state.active_tab = "👤 Anagrafica"
         st.rerun()
 
