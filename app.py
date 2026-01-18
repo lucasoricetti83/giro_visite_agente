@@ -51,8 +51,8 @@ def fetch_data():
     try:
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
-        # Assicuriamo che la colonna 'contatto' sia gestita
-        colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
+        # Assicuriamo che tutte le colonne, comprese 'contatto' e 'storico report', siano gestite
+        colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
             if col not in df.columns: df[col] = ""
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
@@ -216,9 +216,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     st.header("👤 Scheda Anagrafica")
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
     opzioni_ricerca = [""] + nomi_reali
-    idx_default = 0
-    if st.session_state.cliente_selezionato in opzioni_ricerca:
-        idx_default = opzioni_ricerca.index(st.session_state.cliente_selezionato)
+    idx_default = nomi_reali.index(st.session_state.cliente_selezionato) + 1 if st.session_state.cliente_selezionato in nomi_reali else 0
     scelto = st.selectbox("Cerca cliente:", opzioni_ricerca, index=idx_default)
     
     if scelto and scelto != "":
@@ -233,7 +231,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
 
         st.divider()
 
-        # FUNZIONE: APPENA VISITATO (DATA VARIABILE + REPORT)
+        # FUNZIONE: APPENA VISITATO (CRONOLOGICO - DAL PIU RECENTE AL PIU VECCHIO)
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
             if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True):
@@ -245,11 +243,22 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 report_t = st.text_area("Cosa è emerso dalla visita?", placeholder="Inserisci il report qui...")
                 
                 b_col1, b_col2 = st.columns(2)
-                if b_col1.button("💾 SALVA E AGGIORNA CRM", use_container_width=True):
-                    st.session_state.df_master.at[idx, 'note'] = report_t
+                if b_col1.button("💾 SALVA REPORT IN STORICO", use_container_width=True):
+                    # Formatta il nuovo report con la data selezionata
+                    nuovo_entry = f"[{data_v.strftime('%d/%m/%Y')}] {report_t}"
+                    # Recupera lo storico esistente (colonna 'storico report')
+                    storico_vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
+                    
+                    # Logica per mettere il nuovo testo in cima
+                    if storico_vecchio and storico_vecchio != "nan" and storico_vecchio.strip() != "":
+                        storico_aggiornato = nuovo_entry + "\n\n" + storico_vecchio
+                    else:
+                        storico_aggiornato = nuovo_entry
+                    
+                    st.session_state.df_master.at[idx, 'storico report'] = storico_aggiornato
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(data_v)
                     if save_to_gsheets(st.session_state.df_master):
-                        st.success(f"Visita del {data_v.strftime('%d/%m')} registrata correttamente!")
+                        st.success(f"Visita registrata correttamente!")
                         st.session_state.show_quick_report = False
                         st.rerun()
                 if b_col2.button("Annulla", use_container_width=True):
@@ -261,16 +270,23 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.form("edit_anag"):
             c1, c2 = st.columns(2)
             un, ui = c1.text_input("Ragione Sociale", d['nome cliente']), c1.text_input("Indirizzo", d['indirizzo'])
-            uco = c1.text_input("Contatti", d.get('contatto', '')) # VOCE AGGIUNTA
+            u_contatti = c1.text_input("Contatti", d.get('contatto', '')) # VOCE AGGIUNTA
             uf, scelta_v = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)'])), c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut, uc, um = c2.text_input("Telefono", d.get('telefono', '')), c2.text_input("Cellulare", d.get('cellulare','')), c2.text_input("Email", d.get('mail',''))
             st.divider()
             app_d = c1.date_input("Data Appuntamento", value=d['appuntamento'].date() if pd.notnull(d['appuntamento']) else None)
             app_t = c1.time_input("Ora Appuntamento", value=d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0))
             rimuovi = c2.checkbox("Rimuovi appuntamento")
-            uno = st.text_area("Note Storiche", d.get('note', ''))
+            
+            # DIVISIONE TRA NOTE FISSE E STORICO REPORT
+            st.subheader("📝 Note (Annotazioni sempre visibili)")
+            u_note = st.text_area("Inserisci annotazioni fisse qui", d.get('note', ''), height=100)
+            
+            st.subheader("📜 Storico Report (Dal più recente)")
+            u_storico = st.text_area("Tutti i report delle visite passate", d.get('storico report', ''), height=250)
+            
             if st.form_submit_button("💾 Salva Modifiche Anagrafiche"):
-                st.session_state.df_master.at[idx, ['nome cliente','indirizzo','frequenza (giorni)','visitare','telefono','cellulare','mail','note','contatto']] = [un,ui,uf,scelta_v,ut,uc,um,uno,uco]
+                st.session_state.df_master.at[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,u_contatti,uf,scelta_v,ut,uc,um,u_note, u_storico]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
@@ -293,7 +309,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn, nf = c1.text_input("Ragione Sociale *"), c1.number_input("Frequenza Visite (gg)", value=30)
-        nco = c1.text_input("Contatti") # VOCE AGGIUNTA
+        n_contatti = c1.text_input("Contatti") # VOCE AGGIUNTA
         ut, uc, um = c2.text_input("Telefono"), c2.text_input("Cellulare"), c2.text_input("Email")
         st.divider()
         via = st.text_input("Via e Civico")
@@ -314,7 +330,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT, 'contatto': nco}
+                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': n_contatti, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success("✅ Cliente salvato!"); st.rerun()
