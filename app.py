@@ -85,7 +85,7 @@ if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud[
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 
-# Inizializzazione Flag Ferie (Default: Spento)
+# RICHIESTA: Ferie vuote all'avvio e Flag
 if 'attiva_ferie' not in st.session_state: st.session_state.attiva_ferie = False
 if 'ferie' not in st.session_state: st.session_state.ferie = []
 
@@ -105,14 +105,11 @@ def calcola_piano():
     for s in range(11):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
-            
-            # LOGICA FLAG FERIE: Salta il giorno solo se il flag è attivo E le date sono inserite
             if st.session_state.attiva_ferie and st.session_state.ferie and len(st.session_state.ferie) == 2:
-                if st.session_state.ferie[0] <= dt_c <= st.session_state.ferie[1]:
-                    continue
+                if st.session_state.ferie[0] <= dt_c <= st.session_state.ferie[1]: continue
 
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
-            f_esclusi = st.session_state.esclusi_oggi if (s == 2 and g == oggi_dt.weekday()) else []
+            f_esclusi = st.session_state.esclusi_oggi if (s == 2 and g == ora_italiana.weekday()) else []
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].to_dict('records')
@@ -239,7 +236,6 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         else: st.info("📅 **Stato:** Mai visitato.")
 
         st.divider()
-
         # APPENA VISITATO (STORICO)
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
@@ -281,6 +277,19 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 if rim: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 save_to_gsheets(st.session_state.df_master); st.rerun()
+
+        # --- FUNZIONE AGGIUNTA: ELIMINA CLIENTE ---
+        st.divider()
+        with st.expander("🗑️ ELIMINA CLIENTE"):
+            st.warning(f"Attenzione: l'eliminazione di **{scelto}** è definitiva.")
+            conferma_del = st.checkbox("Confermo di voler eliminare questo cliente", key="check_del")
+            if conferma_del:
+                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_def"):
+                    st.session_state.df_master = st.session_state.df_master.drop(idx)
+                    if save_to_gsheets(st.session_state.df_master):
+                        st.session_state.cliente_selezionato = None
+                        st.success("Cliente eliminato correttamente.")
+                        st.rerun()
 
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
@@ -329,14 +338,11 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.session_state.pausa_inizio = c1.time_input("Inizio Pausa", st.session_state.pausa_inizio)
     st.session_state.pausa_fine = c2.time_input("Fine Pausa", st.session_state.pausa_fine)
     st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
-    
     st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
-    # --- NUOVO FLAG FERIE ---
-    st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE (Blocca il giro nelle date scelte sotto)", value=st.session_state.attiva_ferie)
+    st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE", value=st.session_state.attiva_ferie)
     ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie, key="f_in_v4")
     st.session_state.ferie = ferie_in
-    
     st.divider()
     def to_excel(df):
         out = io.BytesIO()
