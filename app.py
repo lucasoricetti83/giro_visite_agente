@@ -49,9 +49,20 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * 6371 * asin(sqrt(a))
 
 def get_coords(address):
-    # --- FUNZIONE REVERSE GEOCODING (aggiungi dopo get_coords) ---
+    """Geocoding: da indirizzo a coordinate"""
+    try:
+        geolocator = Nominatim(user_agent="giro_visite_agente_v26", timeout=10)
+        location = geolocator.geocode(f"{address}, Italia")
+        if location:
+            return (location.latitude, location.longitude)
+        st.warning(f"⚠️ Indirizzo non trovato: {address}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Errore geocoding: {str(e)}")
+        return None
+
 def reverse_geocode(lat, lon):
-    """Converte coordinate in indirizzo"""
+    """Reverse geocoding: da coordinate a indirizzo"""
     try:
         geolocator = Nominatim(user_agent="giro_visite_agente_v26", timeout=10)
         location = geolocator.reverse(f"{lat}, {lon}", language='it')
@@ -67,196 +78,6 @@ def reverse_geocode(lat, lon):
         return None
     except Exception as e:
         st.error(f"❌ Errore reverse geocoding: {str(e)}")
-        return None
-
-# --- TAB: NUOVO CLIENTE (VERSIONE CORRETTA) ---
-elif st.session_state.active_tab == "➕ Nuovo Cliente":
-    st.header("➕ Registrazione Nuovo Cliente")
-    
-    # Sezione GPS
-    st.subheader("📍 Acquisizione Posizione")
-    col_gps1, col_gps2 = st.columns([2, 1])
-    
-    with col_gps1:
-        gps_result = render_gps_button("new_client_gps")
-    
-    # Gestione risultato GPS
-    if gps_result and isinstance(gps_result, dict) and 'latitude' in gps_result:
-        st.session_state.new_coords = (gps_result['latitude'], gps_result['longitude'])
-        
-        # Reverse geocoding automatico
-        with st.spinner("🔍 Recupero indirizzo dalle coordinate..."):
-            addr_info = reverse_geocode(gps_result['latitude'], gps_result['longitude'])
-            
-            if addr_info:
-                st.session_state.gps_address = addr_info
-                st.success(f"✅ GPS acquisito: {addr_info['indirizzo_completo']}")
-            else:
-                st.session_state.gps_address = None
-                st.warning("⚠️ Coordinate acquisite ma indirizzo non trovato. Inserisci manualmente.")
-    
-    # Mostra coordinate acquisite
-    if st.session_state.get('new_coords'):
-        with col_gps2:
-            st.metric(
-                "Coordinate", 
-                f"{st.session_state.new_coords[0]:.6f}, {st.session_state.new_coords[1]:.6f}"
-            )
-            if st.button("🗑️ Cancella GPS", use_container_width=True):
-                st.session_state.new_coords = None
-                st.session_state.gps_address = None
-                st.rerun()
-    
-    st.divider()
-    
-    # Form nuovo cliente
-    with st.form("new_full_v7"):
-        st.subheader("📝 Dati Cliente")
-        
-        c1, c2 = st.columns(2)
-        nn = c1.text_input("Ragione Sociale *", key="nc_nome")
-        nf = c1.number_input("Frequenza Visite (gg)", value=30, key="nc_freq")
-        nco = c1.text_input("Contatti", key="nc_contatti")
-        
-        ut = c2.text_input("Telefono", key="nc_tel")
-        uc = c2.text_input("Cellulare", key="nc_cell")
-        um = c2.text_input("Email", key="nc_mail")
-        
-        st.divider()
-        st.subheader("📍 Indirizzo")
-        
-        # Pre-compila con dati GPS se disponibili
-        gps_addr = st.session_state.get('gps_address', {})
-        
-        via = st.text_input(
-            "Via e Civico", 
-            value=gps_addr.get('via', ''),
-            key="nc_via"
-        )
-        
-        ca_row = st.columns([1, 2, 1])
-        n_cap = ca_row[0].text_input(
-            "CAP", 
-            value=gps_addr.get('cap', ''),
-            key="nc_cap"
-        )
-        cit = ca_row[1].text_input(
-            "Città *", 
-            value=gps_addr.get('citta', ''),
-            key="nc_citta"
-        )
-        n_prov = ca_row[2].text_input(
-            "Provincia", 
-            value=gps_addr.get('provincia', ''),
-            key="nc_prov"
-        )
-        
-        # Note opzionali
-        st.divider()
-        note_init = st.text_area("Note iniziali (opzionale)", key="nc_note", height=100)
-        
-        # Bottone salvataggio
-        col_save1, col_save2 = st.columns([3, 1])
-        btn_salva = col_save1.form_submit_button("✅ CREA E SALVA CLIENTE", use_container_width=True, type="primary")
-        btn_reset = col_save2.form_submit_button("🔄 Reset Form", use_container_width=True)
-        
-        if btn_reset:
-            st.session_state.new_coords = None
-            st.session_state.gps_address = None
-            st.rerun()
-        
-        if btn_salva:
-            # Validazione
-            if not nn:
-                st.error("❌ Inserisci la Ragione Sociale")
-            elif not cit:
-                st.error("❌ Inserisci la Città")
-            else:
-                # Determina coordinate
-                if st.session_state.get('new_coords'):
-                    # Usa GPS
-                    lat_lon = st.session_state.new_coords
-                    st.info("📍 Usando coordinate GPS")
-                else:
-                    # Geocoding da indirizzo
-                    ind_comp = f"{via}, {n_cap} {cit} {n_prov}".strip()
-                    with st.spinner("🔍 Ricerca coordinate indirizzo..."):
-                        lat_lon = get_coords(ind_comp) or get_coords(cit)
-                
-                if lat_lon:
-                    # Crea nuovo cliente
-                    nuovo = {
-                        'nome cliente': nn,
-                        'indirizzo': via,
-                        'cap': n_cap,
-                        'provincia': n_prov,
-                        'contatto': nco,
-                        'visitare': 'SI',
-                        'frequenza (giorni)': nf,
-                        'latitude': lat_lon[0],
-                        'longitude': lat_lon[1],
-                        'ultima visita': pd.Timestamp('2000-01-01'),
-                        'telefono': ut,
-                        'cellulare': uc,
-                        'mail': um,
-                        'note': note_init,
-                        'storico report': '',
-                        'appuntamento': pd.NaT
-                    }
-                    
-                    # Salva
-                    st.session_state.df_master = pd.concat(
-                        [st.session_state.df_master, pd.DataFrame([nuovo])], 
-                        ignore_index=True
-                    )
-                    
-                    if save_to_gsheets(st.session_state.df_master):
-                        st.success(f"✅ Cliente **{nn}** creato con successo!")
-                        
-                        # Reset stato
-                        st.session_state.new_coords = None
-                        st.session_state.gps_address = None
-                        st.session_state.cliente_selezionato = nn
-                        
-                        # Vai alla scheda cliente
-                        if st.button("👤 Vai alla Scheda Cliente"):
-                            st.session_state.active_tab = "👤 Anagrafica"
-                            st.rerun()
-                    else:
-                        st.error("❌ Errore nel salvataggio")
-                else:
-                    st.error("❌ Impossibile trovare le coordinate. Verifica l'indirizzo o usa il GPS.")
-    
-    # Info aggiuntiva
-    st.divider()
-    with st.expander("ℹ️ Come funziona"):
-        st.write("""
-        **Metodo 1: GPS** (consigliato se sei sul posto)
-        1. Clicca "🎯 Usa GPS Attuale"
-        2. Autorizza il browser ad accedere alla posizione
-        3. I campi indirizzo verranno compilati automaticamente
-        4. Verifica/correggi i dati se necessario
-        5. Salva
-        
-        **Metodo 2: Manuale**
-        1. Compila manualmente tutti i campi
-        2. Il sistema cercherà le coordinate dall'indirizzo
-        3. Salva
-        
-        **Note:**
-        - Il GPS funziona solo su HTTPS o localhost
-        - La precisione GPS dipende dal dispositivo
-        - Puoi sempre correggere manualmente i dati compilati automaticamente
-        """)
-    try:
-        geolocator = Nominatim(user_agent="giro_visite_agente_v26", timeout=10)
-        location = geolocator.geocode(f"{address}, Italia")
-        if location:
-            return (location.latitude, location.longitude)
-        st.warning(f"⚠️ Indirizzo non trovato: {address}")
-        return None
-    except Exception as e:
-        st.error(f"❌ Errore geocoding: {str(e)}")
         return None
 
 @st.cache_data(ttl=600) 
@@ -285,7 +106,7 @@ def fetch_config():
     except:
         return {'city': "Ancona", 'lat': 43.6158, 'lon': 13.5189}
 
-# --- FUNZIONE GPS MIGLIORATA ---
+# --- FUNZIONE GPS ---
 def render_gps_button(button_id):
     html_code = f"""
     <button onclick="getLocation()" style="padding:10px 20px; background:#FF4B4B; color:white; border:none; border-radius:5px; cursor:pointer; font-size:16px;">
@@ -440,14 +261,14 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                 m_oggi = folium.Map(location=[tappe[0]['latitude'], tappe[0]['longitude']], zoom_start=10)
                 for i, t in enumerate(tappe):
                     folium.Marker([t['latitude'], t['longitude']], popup=t['nome cliente'], tooltip=f"{i+1}. {t['nome cliente']}").add_to(m_oggi)
-                st_folium(m_oggi, width="100%", height=600, key="map_oggi_v6")
+                st_folium(m_oggi, width="100%", height=600, key="map_oggi_v7")
         else: st.info("✅ Nessuna visita prevista per oggi.")
     else: st.info("🏖️ Oggi è fine settimana!")
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v6")
+    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v7")
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati": df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
     elif filtro_tipo == "Mai Visitati": df_m = df_m[df_m['ultima visita'] <= pd.Timestamp('2000-01-01')]
@@ -456,7 +277,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
         for _, row in df_m.iterrows():
             c = "green" if row['visitare'] == "SI" else "red"
             folium.Marker(location=[row['latitude'], row['longitude']], popup=row['nome cliente'], icon=folium.Icon(color=c, icon="user")).add_to(m)
-        output = st_folium(m, width="100%", height=600, key="main_map_v6")
+        output = st_folium(m, width="100%", height=600, key="main_map_v7")
         cl = output.get("last_object_clicked_popup")
         if cl:
             if st.session_state.last_map_click == cl: st.session_state.cliente_selezionato = cl; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
@@ -468,7 +289,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
     opzioni = [""] + nomi_reali
     idx_def = opzioni.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in opzioni else 0
-    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v6")
+    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v7")
     
     if scelto != "":
         st.session_state.cliente_selezionato = scelto
@@ -491,22 +312,22 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
-            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v6"): st.session_state.show_quick_report = True
+            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v7"): st.session_state.show_quick_report = True
             if st.session_state.show_quick_report:
                 cr1, cr2 = st.columns([1, 2])
-                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v6")
-                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v6")
+                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v7")
+                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v7")
                 c_save, c_cancel = st.columns(2)
-                if c_save.button("💾 SALVA", key="save_rep_v6", use_container_width=True):
+                if c_save.button("💾 SALVA", key="save_rep_v7", use_container_width=True):
                     nuovo = f"[{dv.strftime('%d/%m/%Y')}] {rt}"
                     vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
                     st.session_state.df_master.at[idx, 'storico report'] = nuovo + "\n\n" + vecchio if vecchio != "nan" and vecchio.strip() != "" else nuovo
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(dv)
                     if save_to_gsheets(st.session_state.df_master): st.session_state.show_quick_report = False; st.success("✅ Salvato!"); st.rerun()
-                if c_cancel.button("❌ Annulla", key="can_rep_v6", use_container_width=True): st.session_state.show_quick_report = False; st.rerun()
+                if c_cancel.button("❌ Annulla", key="can_rep_v7", use_container_width=True): st.session_state.show_quick_report = False; st.rerun()
 
         st.divider()
-        with st.form("edit_anag_v6"):
+        with st.form("edit_anag_v7"):
             st.subheader("✏️ Modifica Dati Cliente")
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
@@ -534,52 +355,25 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.expander("🗑️ ELIMINA CLIENTE"):
             st.warning(f"⚠️ Eliminazione di **{scelto}** è DEFINITIVA.")
-            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v6")
+            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v7")
             if conferma_del:
-                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v6"):
+                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v7"):
                     st.session_state.df_master = st.session_state.df_master.drop(idx)
                     if save_to_gsheets(st.session_state.df_master): st.session_state.cliente_selezionato = None; st.success("✅ Cliente eliminato."); st.rerun()
-
-# --- TAB: NUOVO CLIENTE ---
-# --- FUNZIONE REVERSE GEOCODING (aggiungi dopo get_coords) ---
-def reverse_geocode(lat, lon):
-    """Converte coordinate in indirizzo"""
-    try:
-        geolocator = Nominatim(user_agent="giro_visite_agente_v26", timeout=10)
-        location = geolocator.reverse(f"{lat}, {lon}", language='it')
-        if location and location.raw.get('address'):
-            addr = location.raw['address']
-            return {
-                'via': f"{addr.get('road', '')} {addr.get('house_number', '')}".strip(),
-                'cap': addr.get('postcode', ''),
-                'citta': addr.get('city') or addr.get('town') or addr.get('village', ''),
-                'provincia': addr.get('state', ''),
-                'indirizzo_completo': location.address
-            }
-        return None
-    except Exception as e:
-        st.error(f"❌ Errore reverse geocoding: {str(e)}")
-        return None
-
-# --- TAB: NUOVO CLIENTE (VERSIONE CORRETTA) ---
+                        # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
     
-    # Sezione GPS
     st.subheader("📍 Acquisizione Posizione")
     col_gps1, col_gps2 = st.columns([2, 1])
     
     with col_gps1:
         gps_result = render_gps_button("new_client_gps")
     
-    # Gestione risultato GPS
     if gps_result and isinstance(gps_result, dict) and 'latitude' in gps_result:
         st.session_state.new_coords = (gps_result['latitude'], gps_result['longitude'])
-        
-        # Reverse geocoding automatico
         with st.spinner("🔍 Recupero indirizzo dalle coordinate..."):
             addr_info = reverse_geocode(gps_result['latitude'], gps_result['longitude'])
-            
             if addr_info:
                 st.session_state.gps_address = addr_info
                 st.success(f"✅ GPS acquisito: {addr_info['indirizzo_completo']}")
@@ -587,70 +381,41 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 st.session_state.gps_address = None
                 st.warning("⚠️ Coordinate acquisite ma indirizzo non trovato. Inserisci manualmente.")
     
-    # Mostra coordinate acquisite
     if st.session_state.get('new_coords'):
         with col_gps2:
-            st.metric(
-                "Coordinate", 
-                f"{st.session_state.new_coords[0]:.6f}, {st.session_state.new_coords[1]:.6f}"
-            )
-            if st.button("🗑️ Cancella GPS", use_container_width=True):
+            st.metric("Coordinate", f"{st.session_state.new_coords[0]:.6f}, {st.session_state.new_coords[1]:.6f}")
+            if st.button("🗑️ Cancella GPS", use_container_width=True, key="cancel_gps_v7"):
                 st.session_state.new_coords = None
                 st.session_state.gps_address = None
                 st.rerun()
     
     st.divider()
     
-    # Form nuovo cliente
     with st.form("new_full_v7"):
         st.subheader("📝 Dati Cliente")
-        
         c1, c2 = st.columns(2)
         nn = c1.text_input("Ragione Sociale *", key="nc_nome")
         nf = c1.number_input("Frequenza Visite (gg)", value=30, key="nc_freq")
         nco = c1.text_input("Contatti", key="nc_contatti")
-        
         ut = c2.text_input("Telefono", key="nc_tel")
         uc = c2.text_input("Cellulare", key="nc_cell")
         um = c2.text_input("Email", key="nc_mail")
         
         st.divider()
         st.subheader("📍 Indirizzo")
-        
-        # Pre-compila con dati GPS se disponibili
         gps_addr = st.session_state.get('gps_address', {})
-        
-        via = st.text_input(
-            "Via e Civico", 
-            value=gps_addr.get('via', ''),
-            key="nc_via"
-        )
-        
+        via = st.text_input("Via e Civico", value=gps_addr.get('via', ''), key="nc_via")
         ca_row = st.columns([1, 2, 1])
-        n_cap = ca_row[0].text_input(
-            "CAP", 
-            value=gps_addr.get('cap', ''),
-            key="nc_cap"
-        )
-        cit = ca_row[1].text_input(
-            "Città *", 
-            value=gps_addr.get('citta', ''),
-            key="nc_citta"
-        )
-        n_prov = ca_row[2].text_input(
-            "Provincia", 
-            value=gps_addr.get('provincia', ''),
-            key="nc_prov"
-        )
+        n_cap = ca_row[0].text_input("CAP", value=gps_addr.get('cap', ''), key="nc_cap")
+        cit = ca_row[1].text_input("Città *", value=gps_addr.get('citta', ''), key="nc_citta")
+        n_prov = ca_row[2].text_input("Provincia", value=gps_addr.get('provincia', ''), key="nc_prov")
         
-        # Note opzionali
         st.divider()
         note_init = st.text_area("Note iniziali (opzionale)", key="nc_note", height=100)
         
-        # Bottone salvataggio
         col_save1, col_save2 = st.columns([3, 1])
         btn_salva = col_save1.form_submit_button("✅ CREA E SALVA CLIENTE", use_container_width=True, type="primary")
-        btn_reset = col_save2.form_submit_button("🔄 Reset Form", use_container_width=True)
+        btn_reset = col_save2.form_submit_button("🔄 Reset", use_container_width=True)
         
         if btn_reset:
             st.session_state.new_coords = None
@@ -658,25 +423,20 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
             st.rerun()
         
         if btn_salva:
-            # Validazione
             if not nn:
                 st.error("❌ Inserisci la Ragione Sociale")
             elif not cit:
                 st.error("❌ Inserisci la Città")
             else:
-                # Determina coordinate
                 if st.session_state.get('new_coords'):
-                    # Usa GPS
                     lat_lon = st.session_state.new_coords
                     st.info("📍 Usando coordinate GPS")
                 else:
-                    # Geocoding da indirizzo
                     ind_comp = f"{via}, {n_cap} {cit} {n_prov}".strip()
                     with st.spinner("🔍 Ricerca coordinate indirizzo..."):
                         lat_lon = get_coords(ind_comp) or get_coords(cit)
                 
                 if lat_lon:
-                    # Crea nuovo cliente
                     nuovo = {
                         'nome cliente': nn,
                         'indirizzo': via,
@@ -696,22 +456,15 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         'appuntamento': pd.NaT
                     }
                     
-                    # Salva
-                    st.session_state.df_master = pd.concat(
-                        [st.session_state.df_master, pd.DataFrame([nuovo])], 
-                        ignore_index=True
-                    )
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     
                     if save_to_gsheets(st.session_state.df_master):
                         st.success(f"✅ Cliente **{nn}** creato con successo!")
-                        
-                        # Reset stato
                         st.session_state.new_coords = None
                         st.session_state.gps_address = None
                         st.session_state.cliente_selezionato = nn
                         
-                        # Vai alla scheda cliente
-                        if st.button("👤 Vai alla Scheda Cliente"):
+                        if st.button("👤 Vai alla Scheda Cliente", key="goto_scheda_v7"):
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
                     else:
@@ -719,7 +472,6 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 else:
                     st.error("❌ Impossibile trovare le coordinate. Verifica l'indirizzo o usa il GPS.")
     
-    # Info aggiuntiva
     st.divider()
     with st.expander("ℹ️ Come funziona"):
         st.write("""
@@ -740,6 +492,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         - La precisione GPS dipende dal dispositivo
         - Puoi sempre correggere manualmente i dati compilati automaticamente
         """)
+
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
@@ -749,8 +502,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         if save_config_cloud("GPS", gps_base['latitude'], gps_base['longitude']): 
             st.success("✅ Base GPS aggiornata!")
             st.rerun()
-    
-    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v6")
+    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v7")
     if nc != st.session_state.start_city:
         co = get_coords(nc)
         if co and save_config_cloud(nc, co[0], co[1]): 
@@ -768,9 +520,8 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
     st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE", value=st.session_state.attiva_ferie)
-    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v6")
+    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v7")
     
-    # Gestione ferie migliorata
     if isinstance(ferie_in, (list, tuple)):
         st.session_state.ferie = list(ferie_in)
         if len(ferie_in) == 2:
@@ -784,7 +535,6 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     
     st.divider()
     
-    # Export Excel
     def to_excel(df):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='openpyxl') as writer: 
@@ -797,16 +547,16 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         data=to_excel(st.session_state.df_master), 
         file_name=f"crm_export_{ora_italiana.strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
+        use_container_width=True,
+        key="export_excel_v7"
     )
     
-    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True):
+    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True, key="reload_cloud_v7"):
         st.cache_data.clear()
         st.session_state.df_master = fetch_data()
         st.success("✅ Dati ricaricati!")
         st.rerun()
     
-    # Info sistema
     st.divider()
     with st.expander("ℹ️ Info Sistema"):
         st.write(f"**Clienti totali:** {len(st.session_state.df_master)}")
@@ -818,30 +568,24 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 elif st.session_state.active_tab == "📅 Agenda":
     st.header("📅 Agenda Settimanale")
     
-    # Navigazione settimane
     data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     col_p, col_t, col_n = st.columns([1, 2, 1])
     
-    if col_p.button("⬅️ Precedente", key="agg_p_v6", use_container_width=True):
+    if col_p.button("⬅️ Precedente", key="agg_p_v7", use_container_width=True):
         st.session_state.current_week_index -= 1
         st.rerun()
     
-    col_t.markdown(
-        f"<h3 style='text-align: center;'>📅 {etichette_settimane[st.session_state.current_week_index]}</h3>", 
-        unsafe_allow_html=True
-    )
+    col_t.markdown(f"<h3 style='text-align: center;'>📅 {etichette_settimane[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
     
-    if col_n.button("Successiva ➡️", key="agg_n_v6", use_container_width=True):
+    if col_n.button("Successiva ➡️", key="agg_n_v7", use_container_width=True):
         st.session_state.current_week_index += 1
         st.rerun()
     
-    # Info settimana
     data_dom = data_lunedi + timedelta(days=6)
     st.caption(f"Dal {data_lunedi.strftime('%d/%m/%Y')} al {data_dom.strftime('%d/%m/%Y')}")
     
     st.divider()
     
-    # Griglia giorni
     cols = st.columns(5)
     g_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
     
@@ -849,15 +593,12 @@ elif st.session_state.active_tab == "📅 Agenda":
         dt_g = data_lunedi + timedelta(days=i)
         
         with cols[i]:
-            # Header giorno
             st.subheader(f"{g}")
             st.caption(f"{dt_g.strftime('%d/%m/%Y')}")
             
-            # Tappe del giorno
             tappe_giorno = agenda[st.session_state.current_week_index][i]
             
             if tappe_giorno:
-                # Statistiche giorno
                 num_app = sum(1 for t in tappe_giorno if t.get('tipo_tappa') == "📌 APPUNTAMENTO")
                 num_giro = len(tappe_giorno) - num_app
                 
@@ -868,40 +609,26 @@ elif st.session_state.active_tab == "📅 Agenda":
                 
                 st.divider()
                 
-                # Lista tappe
                 for t in tappe_giorno:
                     with st.container(border=True):
-                        # Icona tipo tappa
                         icona = "📌" if t.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
-                        
                         st.caption(f"{icona} {t['ora_arrivo']}")
                         
-                        # Bottone cliente
-                        if st.button(
-                            t['nome cliente'], 
-                            key=f"ag_v6_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", 
-                            use_container_width=True
-                        ):
+                        if st.button(t['nome cliente'], key=f"ag_v7_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
                             st.session_state.cliente_selezionato = t['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
                         
-                        # Info aggiuntive
                         if t.get('indirizzo'):
                             st.caption(f"📍 {t['indirizzo'][:30]}...")
             else:
-                # Nessuna visita
                 st.info("📭 Nessuna visita")
     
-    # Statistiche settimana
     st.divider()
     st.subheader("📊 Statistiche Settimana")
     
     totale_visite = sum(len(agenda[st.session_state.current_week_index][g]) for g in range(5))
-    totale_app = sum(
-        sum(1 for t in agenda[st.session_state.current_week_index][g] if t.get('tipo_tappa') == "📌 APPUNTAMENTO") 
-        for g in range(5)
-    )
+    totale_app = sum(sum(1 for t in agenda[st.session_state.current_week_index][g] if t.get('tipo_tappa') == "📌 APPUNTAMENTO") for g in range(5))
     totale_giro = totale_visite - totale_app
     
     stat_cols = st.columns(4)
@@ -909,12 +636,11 @@ elif st.session_state.active_tab == "📅 Agenda":
     stat_cols[1].metric("📌 Appuntamenti", totale_app)
     stat_cols[2].metric("🚗 Visite Giro", totale_giro)
     
-    # Media giornaliera
     media_giorno = totale_visite / 5 if totale_visite > 0 else 0
     stat_cols[3].metric("📈 Media/Giorno", f"{media_giorno:.1f}")
 
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.6 Ottimizzata")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.7 Ottimizzata")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
