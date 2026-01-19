@@ -378,25 +378,24 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.subheader("📍 Punto di Partenza")
     gps_base = render_gps_button("base_gps")
     if gps_base and isinstance(gps_base, dict) and 'latitude' in gps_base:
-        if save_config_cloud("GPS", gps_base['latitude'], gps_base['longitude']): st.success("✅ Base GPS aggiornata!"); st.rerun()
+        if save_config_cloud("GPS", gps_base['latitude'], gps_base['longitude']): 
+            st.success("✅ Base GPS aggiornata!")
+            st.rerun()
+    
     nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v6")
     if nc != st.session_state.start_city:
         co = get_coords(nc)
-        if co: 
-            if save_config_cloud(nc, co[0], co[1]): st.rerun()
+        if co and save_config_cloud(nc, co[0], co[1]): 
+            st.rerun()
+    
     st.divider()
     st.subheader("⏰ Orari e Tempi")
     c1, c2 = st.columns(2)
     st.session_state.h_inizio = c1.time_input("Inizio Lavoro", st.session_state.h_inizio)
-    st.session_state.h_fine = c2.time
-
-# Continuazione TAB PARAMETRI (dopo "c2.time")
-_input("Fine Lavoro", st.session_state.h_fine)
-c1.time_input("Inizio Lavoro", st.session_state.h_inizio)
-st.session_state.h_fine = c2.time_input("Fine Lavoro", st.session_state.h_fine)
-st.session_state.pausa_inizio = c1.time_input("Inizio Pausa", st.session_state.pausa_inizio)
-st.session_state.pausa_fine = c2.time_input("Fine Pausa", st.session_state.pausa_fine)
-st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
+    st.session_state.h_fine = c2.time_input("Fine Lavoro", st.session_state.h_fine)
+    st.session_state.pausa_inizio = c1.time_input("Inizio Pausa", st.session_state.pausa_inizio)
+    st.session_state.pausa_fine = c2.time_input("Fine Pausa", st.session_state.pausa_fine)
+    st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
     
     st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
@@ -546,7 +545,7 @@ elif st.session_state.active_tab == "📅 Agenda":
     media_giorno = totale_visite / 5 if totale_visite > 0 else 0
     stat_cols[3].metric("📈 Media/Giorno", f"{media_giorno:.1f}")
 
-# --- FOOTER (opzionale) ---
+# --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
 footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.6 Ottimizzata")
