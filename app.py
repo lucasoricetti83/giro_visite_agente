@@ -15,7 +15,7 @@ st.set_page_config(page_title="Giro Visite CRM Pro", layout="wide")
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Correzione Fuso Orario Italia
+# --- CORREZIONE FUSO ORARIO ITALIA ---
 ora_italiana = datetime.now() + timedelta(hours=1)
 
 # --- FUNZIONI DI SALVATAGGIO ---
@@ -85,28 +85,39 @@ if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud[
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 
-# Inizializzazione parametri (Ferie vuote di default)
+# MODIFICA: Ferie inizializzate come lista vuota per non bloccare il giro attuale
 if 'ferie' not in st.session_state: st.session_state.ferie = []
+
 for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': time(13, 0), 'pausa_fine': time(14, 0), 'durata_v': 45}.items():
     if key not in st.session_state: st.session_state[key] = val
 
 # --- 4. LOGICA CALCOLO GIRO ---
 def calcola_piano():
     if st.session_state.df_master.empty: return {}, ora_italiana, []
-    lun_corrente = ora_italiana - timedelta(days=ora_italiana.weekday())
+    oggi_dt = ora_italiana
+    lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
     lun_ref = lun_corrente - timedelta(weeks=2) 
     df_sim = st.session_state.df_master.copy()
     agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
-    etichette = [f"Passata (-{2-i})" if i<2 else ("Settimana Corrente" if i==2 else f"Futura (+{i-2})") for i in range(11)]
+    
+    etichette = []
+    for i in range(11):
+        if i < 2: etichette.append(f"Passata (-{2-i})")
+        elif i == 2: etichette.append("Settimana Corrente")
+        else: etichette.append(f"Futura (+{i-2})")
     
     for s in range(11):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
+            
+            # Controllo Ferie (se l'utente ha inserito un periodo)
             if st.session_state.ferie and len(st.session_state.ferie) == 2:
-                if st.session_state.ferie[0] <= dt_c <= st.session_state.ferie[1]: continue
+                if st.session_state.ferie[0] <= dt_c <= st.session_state.ferie[1]:
+                    continue
 
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             f_esclusi = st.session_state.esclusi_oggi if (s == 2 and g == ora_italiana.weekday()) else []
+
             appuntamenti = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['appuntamento'].dt.date == dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].sort_values('appuntamento')
             df_sim['g_p'] = (pd.to_datetime(dt_c) - df_sim['ultima visita']).dt.days.fillna(999)
             urg = df_sim[(df_sim['visitare'] == 'SI') & (df_sim['g_p'] >= df_sim['frequenza (giorni)']) & (df_sim['appuntamento'].dt.date != dt_c) & (~df_sim['nome cliente'].isin(f_esclusi))].to_dict('records')
@@ -181,7 +192,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                 m_oggi = folium.Map(location=[tappe[0]['latitude'], tappe[0]['longitude']], zoom_start=10)
                 for i, t in enumerate(tappe):
                     folium.Marker([t['latitude'], t['longitude']], popup=t['nome cliente'], tooltip=f"{i+1}. {t['nome cliente']}").add_to(m_oggi)
-                st_folium(m_oggi, width="100%", height=600, key="map_oggi_v2")
+                st_folium(m_oggi, width="100%", height=600, key="map_oggi_pro")
         else: st.info("Nessuna visita prevista.")
     else: st.info("Oggi è fine settimana!")
 
@@ -197,12 +208,13 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
         for _, row in df_m.iterrows():
             color = "green" if row['visitare'] == "SI" else "red"
             folium.Marker(location=[row['latitude'], row['longitude']], popup=row['nome cliente'], icon=folium.Icon(color=color, icon="user")).add_to(m)
-        output = st_folium(m, width="100%", height=600, key="main_map_v2")
+        output = st_folium(m, width="100%", height=600, key="main_map_pro")
         cl = output.get("last_object_clicked_popup")
         if cl:
             if st.session_state.last_map_click == cl:
                 st.session_state.cliente_selezionato = cl; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
-            else: st.session_state.last_map_click = cl; st.toast(f"Tocca ancora: {cl}")
+            else:
+                st.session_state.last_map_click = cl; st.toast(f"Tocca ancora: {cl}")
 
 # --- TAB: ANAGRAFICA ---
 elif st.session_state.active_tab == "👤 Anagrafica":
@@ -229,7 +241,6 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             if gm > 0: st.success(f"📅 **Prossima visita suggerita:** {prox_v.strftime('%d/%m/%Y')} (tra {gm} gg)")
             elif gm == 0: st.warning(f"📅 **Prossima visita suggerita:** OGGI!")
             else: st.error(f"📅 **Visita SCADUTA il:** {prox_v.strftime('%d/%m/%Y')} ({abs(gm)} gg fa)")
-        else: st.info("📅 **Stato:** Mai visitato.")
 
         st.divider()
 
@@ -260,7 +271,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             scv = c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut = c2.text_input("Telefono", d.get('telefono', ''))
             uc = c2.text_input("Cellulare", d.get('cellulare',''))
-            um = c2.text_input("Email", d.get('mail',''))
+            um = c2.text_input("Email", d.get('mail', ''))
             st.divider()
             app_d = c1.date_input("Appuntamento", value=d['appuntamento'].date() if pd.notnull(d['appuntamento']) else None)
             app_t = c1.time_input("Ora", value=d['appuntamento'].time() if pd.notnull(d['appuntamento']) else time(10, 0))
@@ -272,6 +283,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                 if rim: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 save_to_gsheets(st.session_state.df_master); st.rerun()
+    else: st.info("Seleziona un cliente.")
 
 # --- TAB: NUOVO CLIENTE ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
@@ -282,7 +294,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with st.form("new_full"):
         c1, c2 = st.columns(2)
         nn = c1.text_input("Ragione Sociale *")
-        nf = c1.number_input("Frequenza (gg)", value=30)
+        nf = c1.number_input("Frequenza Visite (gg)", value=30)
         nco = c1.text_input("Contatti")
         ut, uc, um = c2.text_input("Tel"), c2.text_input("Cell"), c2.text_input("Email")
         via = st.text_input("Via e Civico")
@@ -333,9 +345,9 @@ elif st.session_state.active_tab == "📅 Agenda":
     agenda, lun_base_calcolato, etichette_settimane = calcola_piano()
     data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     col_p, col_t, col_n = st.columns([1, 2, 1])
-    if col_p.button("⬅️ Precedente", key="agg_p"): st.session_state.current_week_index -= 1; st.rerun()
+    if col_p.button("⬅️ Precedente"): st.session_state.current_week_index -= 1; st.rerun()
     col_t.markdown(f"<h3 style='text-align: center;'>{etichette_settimane[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
-    if col_n.button("Successiva ➡️", key="agg_n"): st.session_state.current_week_index += 1; st.rerun()
+    if col_n.button("Successiva ➡️"): st.session_state.current_week_index += 1; st.rerun()
     st.divider()
     cols = st.columns(5)
     g_nomi = ["Lun", "Mar", "Mer", "Gio", "Ven"]
