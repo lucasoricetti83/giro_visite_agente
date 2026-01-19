@@ -541,36 +541,205 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                     if save_to_gsheets(st.session_state.df_master): st.session_state.cliente_selezionato = None; st.success("✅ Cliente eliminato."); st.rerun()
 
 # --- TAB: NUOVO CLIENTE ---
+# --- FUNZIONE REVERSE GEOCODING (aggiungi dopo get_coords) ---
+def reverse_geocode(lat, lon):
+    """Converte coordinate in indirizzo"""
+    try:
+        geolocator = Nominatim(user_agent="giro_visite_agente_v26", timeout=10)
+        location = geolocator.reverse(f"{lat}, {lon}", language='it')
+        if location and location.raw.get('address'):
+            addr = location.raw['address']
+            return {
+                'via': f"{addr.get('road', '')} {addr.get('house_number', '')}".strip(),
+                'cap': addr.get('postcode', ''),
+                'citta': addr.get('city') or addr.get('town') or addr.get('village', ''),
+                'provincia': addr.get('state', ''),
+                'indirizzo_completo': location.address
+            }
+        return None
+    except Exception as e:
+        st.error(f"❌ Errore reverse geocoding: {str(e)}")
+        return None
+
+# --- TAB: NUOVO CLIENTE (VERSIONE CORRETTA) ---
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
-    gps_result = render_gps_button("new_client_gps")
+    
+    # Sezione GPS
+    st.subheader("📍 Acquisizione Posizione")
+    col_gps1, col_gps2 = st.columns([2, 1])
+    
+    with col_gps1:
+        gps_result = render_gps_button("new_client_gps")
+    
+    # Gestione risultato GPS
     if gps_result and isinstance(gps_result, dict) and 'latitude' in gps_result:
         st.session_state.new_coords = (gps_result['latitude'], gps_result['longitude'])
-        st.success(f"✅ GPS acquisito: {gps_result['latitude']:.6f}, {gps_result['longitude']:.6f}")
+        
+        # Reverse geocoding automatico
+        with st.spinner("🔍 Recupero indirizzo dalle coordinate..."):
+            addr_info = reverse_geocode(gps_result['latitude'], gps_result['longitude'])
+            
+            if addr_info:
+                st.session_state.gps_address = addr_info
+                st.success(f"✅ GPS acquisito: {addr_info['indirizzo_completo']}")
+            else:
+                st.session_state.gps_address = None
+                st.warning("⚠️ Coordinate acquisite ma indirizzo non trovato. Inserisci manualmente.")
     
-    with st.form("new_full_v6"):
+    # Mostra coordinate acquisite
+    if st.session_state.get('new_coords'):
+        with col_gps2:
+            st.metric(
+                "Coordinate", 
+                f"{st.session_state.new_coords[0]:.6f}, {st.session_state.new_coords[1]:.6f}"
+            )
+            if st.button("🗑️ Cancella GPS", use_container_width=True):
+                st.session_state.new_coords = None
+                st.session_state.gps_address = None
+                st.rerun()
+    
+    st.divider()
+    
+    # Form nuovo cliente
+    with st.form("new_full_v7"):
+        st.subheader("📝 Dati Cliente")
+        
         c1, c2 = st.columns(2)
-        nn = c1.text_input("Ragione Sociale *")
-        nf = c1.number_input("Frequenza Visite (gg)", value=30)
-        nco = c1.text_input("Contatti")
-        ut, uc, um = c2.text_input("Tel"), c2.text_input("Cell"), c2.text_input("Email")
+        nn = c1.text_input("Ragione Sociale *", key="nc_nome")
+        nf = c1.number_input("Frequenza Visite (gg)", value=30, key="nc_freq")
+        nco = c1.text_input("Contatti", key="nc_contatti")
+        
+        ut = c2.text_input("Telefono", key="nc_tel")
+        uc = c2.text_input("Cellulare", key="nc_cell")
+        um = c2.text_input("Email", key="nc_mail")
+        
         st.divider()
-        via = st.text_input("Via e Civico")
+        st.subheader("📍 Indirizzo")
+        
+        # Pre-compila con dati GPS se disponibili
+        gps_addr = st.session_state.get('gps_address', {})
+        
+        via = st.text_input(
+            "Via e Civico", 
+            value=gps_addr.get('via', ''),
+            key="nc_via"
+        )
+        
         ca_row = st.columns([1, 2, 1])
-        n_cap = ca_row[0].text_input("CAP")
-        cit = ca_row[1].text_input("Città *")
-        n_prov = ca_row[2].text_input("Prov.")
-        if st.form_submit_button("✅ CREA E SALVA", use_container_width=True):
-            if nn and cit:
-                ind_comp = f"{via}, {n_cap} {cit} {n_prov}".strip()
-                lat_lon = st.session_state.get('new_coords') or get_coords(ind_comp) or get_coords(cit)
+        n_cap = ca_row[0].text_input(
+            "CAP", 
+            value=gps_addr.get('cap', ''),
+            key="nc_cap"
+        )
+        cit = ca_row[1].text_input(
+            "Città *", 
+            value=gps_addr.get('citta', ''),
+            key="nc_citta"
+        )
+        n_prov = ca_row[2].text_input(
+            "Provincia", 
+            value=gps_addr.get('provincia', ''),
+            key="nc_prov"
+        )
+        
+        # Note opzionali
+        st.divider()
+        note_init = st.text_area("Note iniziali (opzionale)", key="nc_note", height=100)
+        
+        # Bottone salvataggio
+        col_save1, col_save2 = st.columns([3, 1])
+        btn_salva = col_save1.form_submit_button("✅ CREA E SALVA CLIENTE", use_container_width=True, type="primary")
+        btn_reset = col_save2.form_submit_button("🔄 Reset Form", use_container_width=True)
+        
+        if btn_reset:
+            st.session_state.new_coords = None
+            st.session_state.gps_address = None
+            st.rerun()
+        
+        if btn_salva:
+            # Validazione
+            if not nn:
+                st.error("❌ Inserisci la Ragione Sociale")
+            elif not cit:
+                st.error("❌ Inserisci la Città")
+            else:
+                # Determina coordinate
+                if st.session_state.get('new_coords'):
+                    # Usa GPS
+                    lat_lon = st.session_state.new_coords
+                    st.info("📍 Usando coordinate GPS")
+                else:
+                    # Geocoding da indirizzo
+                    ind_comp = f"{via}, {n_cap} {cit} {n_prov}".strip()
+                    with st.spinner("🔍 Ricerca coordinate indirizzo..."):
+                        lat_lon = get_coords(ind_comp) or get_coords(cit)
+                
                 if lat_lon:
-                    nuovo = {'nome cliente': nn, 'indirizzo': via, 'cap': n_cap, 'provincia': n_prov, 'contatto': nco, 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat_lon[0], 'longitude': lat_lon[1], 'ultima visita': pd.Timestamp('2000-01-01'), 'telefono': ut, 'cellulare': uc, 'mail': um}
-                    st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
-                    if save_to_gsheets(st.session_state.df_master): st.success("✅ Cliente creato!"); st.rerun()
-                else: st.error("❌ Impossibile trovare coordinate")
-            else: st.warning("⚠️ Compila i campi obbligatori")
-
+                    # Crea nuovo cliente
+                    nuovo = {
+                        'nome cliente': nn,
+                        'indirizzo': via,
+                        'cap': n_cap,
+                        'provincia': n_prov,
+                        'contatto': nco,
+                        'visitare': 'SI',
+                        'frequenza (giorni)': nf,
+                        'latitude': lat_lon[0],
+                        'longitude': lat_lon[1],
+                        'ultima visita': pd.Timestamp('2000-01-01'),
+                        'telefono': ut,
+                        'cellulare': uc,
+                        'mail': um,
+                        'note': note_init,
+                        'storico report': '',
+                        'appuntamento': pd.NaT
+                    }
+                    
+                    # Salva
+                    st.session_state.df_master = pd.concat(
+                        [st.session_state.df_master, pd.DataFrame([nuovo])], 
+                        ignore_index=True
+                    )
+                    
+                    if save_to_gsheets(st.session_state.df_master):
+                        st.success(f"✅ Cliente **{nn}** creato con successo!")
+                        
+                        # Reset stato
+                        st.session_state.new_coords = None
+                        st.session_state.gps_address = None
+                        st.session_state.cliente_selezionato = nn
+                        
+                        # Vai alla scheda cliente
+                        if st.button("👤 Vai alla Scheda Cliente"):
+                            st.session_state.active_tab = "👤 Anagrafica"
+                            st.rerun()
+                    else:
+                        st.error("❌ Errore nel salvataggio")
+                else:
+                    st.error("❌ Impossibile trovare le coordinate. Verifica l'indirizzo o usa il GPS.")
+    
+    # Info aggiuntiva
+    st.divider()
+    with st.expander("ℹ️ Come funziona"):
+        st.write("""
+        **Metodo 1: GPS** (consigliato se sei sul posto)
+        1. Clicca "🎯 Usa GPS Attuale"
+        2. Autorizza il browser ad accedere alla posizione
+        3. I campi indirizzo verranno compilati automaticamente
+        4. Verifica/correggi i dati se necessario
+        5. Salva
+        
+        **Metodo 2: Manuale**
+        1. Compila manualmente tutti i campi
+        2. Il sistema cercherà le coordinate dall'indirizzo
+        3. Salva
+        
+        **Note:**
+        - Il GPS funziona solo su HTTPS o localhost
+        - La precisione GPS dipende dal dispositivo
+        - Puoi sempre correggere manualmente i dati compilati automaticamente
+        """)
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
     st.header("⚙️ Configurazione")
