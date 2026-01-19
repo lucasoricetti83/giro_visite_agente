@@ -392,7 +392,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
 
 # Continuazione TAB PARAMETRI (dopo "c2.time")
 _input("Fine Lavoro", st.session_state.h_fine)
-    c1.time_input("Inizio Lavoro", st.session_state.h_inizio)
+c1.time_input("Inizio Lavoro", st.session_state.h_inizio)
 st.session_state.h_fine = c2.time_input("Fine Lavoro", st.session_state.h_fine)
 st.session_state.pausa_inizio = c1.time_input("Inizio Pausa", st.session_state.pausa_inizio)
 st.session_state.pausa_fine = c2.time_input("Fine Pausa", st.session_state.pausa_fine)
