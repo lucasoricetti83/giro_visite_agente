@@ -52,7 +52,7 @@ def fetch_data():
         df = conn.read(spreadsheet=URL_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
         # Assicuriamo che le colonne chiave siano presenti
-        colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
+        colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'cap', 'provincia', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
             if col not in df.columns: df[col] = ""
         for c in ['latitude', 'longitude', 'frequenza (giorni)']:
@@ -83,7 +83,8 @@ if 'start_lat' not in st.session_state: st.session_state.start_lat = conf_cloud[
 if 'start_lon' not in st.session_state: st.session_state.start_lon = conf_cloud['lon']
 if 'start_city' not in st.session_state: st.session_state.start_city = conf_cloud['city']
 
-for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': time(13, 0), 'pausa_fine': time(14, 0), 'durata_v': 45, 'ferie': (datetime.now().date(), datetime.now().date())}.items():
+# MODIFICA: Ferie inizializzate come lista vuota per non bloccare oggi
+for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': time(13, 0), 'pausa_fine': time(14, 0), 'durata_v': 45, 'ferie': []}.items():
     if key not in st.session_state: st.session_state[key] = val
 
 # --- 4. LOGICA CALCOLO GIRO ---
@@ -104,7 +105,13 @@ def calcola_piano():
     for s in range(11):
         for g in range(5):
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
-            if dt_c in st.session_state.ferie: continue
+            
+            # MODIFICA: Controllo ferie migliorato (gestisce il range)
+            if st.session_state.ferie and len(st.session_state.ferie) == 2:
+                if st.session_state.ferie[0] <= dt_c <= st.session_state.ferie[1]: continue
+            elif st.session_state.ferie and len(st.session_state.ferie) == 1:
+                if dt_c == st.session_state.ferie[0]: continue
+
             o_s, p_s = datetime.combine(dt_c, st.session_state.h_inizio), (st.session_state.start_lat, st.session_state.start_lon)
             
             f_esclusi = st.session_state.esclusi_oggi if (s == 2 and g == oggi_dt.weekday()) else []
@@ -268,6 +275,8 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         with st.form("edit_anag"):
             c1, c2 = st.columns(2)
             un, ui = c1.text_input("Ragione Sociale", d['nome cliente']), c1.text_input("Indirizzo", d['indirizzo'])
+            u_cap = c1.text_input("CAP", d.get('cap', ''))
+            u_prov = c1.text_input("Provincia", d.get('provincia', ''))
             uco = c1.text_input("Contatti", d.get('contatto', '')) # VOCE CONTATTI AGGIUNTA
             uf, scelta_v = c1.number_input("Frequenza (gg)", value=int(d['frequenza (giorni)'])), c1.selectbox("Includere?", ["SI", "NO"], index=0 if d['visitare'] == "SI" else 1)
             ut, uc, um = c2.text_input("Telefono", d.get('telefono', '')), c2.text_input("Cellulare", d.get('cellulare','')), c2.text_input("Email", d.get('mail',''))
@@ -284,7 +293,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
             
             if st.form_submit_button("💾 Salva Modifiche Anagrafiche"):
                 # CORREZIONE ERRORE INVALIDINDEXERROR: Usiamo .loc per colonne multiple
-                st.session_state.df_master.loc[idx, ['nome cliente','indirizzo','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,uco,uf,scelta_v,ut,uc,um,uno,ust]
+                st.session_state.df_master.loc[idx, ['nome cliente','indirizzo','cap','provincia','contatto','frequenza (giorni)','visitare','telefono','cellulare','mail','note', 'storico report']] = [un,ui,u_cap,u_prov,uco,uf,scelta_v,ut,uc,um,uno,ust]
                 if rimuovi: st.session_state.df_master.at[idx, 'appuntamento'] = pd.NaT
                 elif app_d: st.session_state.df_master.at[idx, 'appuntamento'] = datetime.combine(app_d, app_t)
                 if save_to_gsheets(st.session_state.df_master): st.rerun()
@@ -312,13 +321,15 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
         st.divider()
         via = st.text_input("Via e Civico")
         ca_row = st.columns([1, 2, 1])
-        cap, cit, pro = ca_row[0].text_input("CAP"), ca_row[1].text_input("Città *"), ca_row[2].text_input("Prov.")
+        n_cap = ca_row[0].text_input("CAP")
+        cit = ca_row[1].text_input("Città *")
+        n_prov = ca_row[2].text_input("Prov.")
         st.divider()
         m_lat = st.text_input("Latitudine Manuale (opzionale)")
         m_lon = st.text_input("Longitudine Manuale (opzionale)")
         if st.form_submit_button("✅ CREA E SALVA"):
             if nn and cit:
-                ind_comp = f"{via}, {cap} {cit} {pro}".strip(", ").strip()
+                ind_comp = f"{via}, {n_cap} {cit} {n_prov}".strip(", ").strip()
                 lat, lon = None, None
                 if m_lat and m_lon: lat, lon = float(m_lat), float(m_lon)
                 elif 'new_coords' in st.session_state: lat, lon = st.session_state.new_coords
@@ -328,7 +339,7 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         if not lat and via: lat, lon = get_coords(f"{via}, {cit}") or (None, None)
                         if not lat: lat, lon = get_coords(cit) or (None, None)
                 if lat:
-                    nuovo = {'nome cliente': nn, 'indirizzo': ind_comp, 'contatto': nco, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
+                    nuovo = {'nome cliente': nn, 'indirizzo': via, 'cap': n_cap, 'provincia': n_prov, 'contatto': nco, 'referente': '', 'telefono': ut, 'cellulare': uc, 'mail': um, 'note': '', 'storico report': '', 'visitare': 'SI', 'frequenza (giorni)': nf, 'latitude': lat, 'longitude': lon, 'ultima visita': pd.Timestamp('2000-01-01'), 'appuntamento': pd.NaT}
                     st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo])], ignore_index=True)
                     if save_to_gsheets(st.session_state.df_master):
                         st.success("✅ Cliente salvato!"); st.rerun()
@@ -357,8 +368,9 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.session_state.pausa_inizio, st.session_state.pausa_fine = co1.time_input("Inizio Pausa", st.session_state.pausa_inizio), col2.time_input("Fine Pausa", st.session_state.pausa_fine)
     st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
     st.divider()
-    ferie_in = st.date_input("Periodo chiusura", value=st.session_state.ferie)
-    if isinstance(ferie_in, tuple) and len(ferie_in) == 2: st.session_state.ferie = ferie_in
+    # MODIFICA: Campo ferie inizializzato come vuoto
+    ferie_in = st.date_input("Periodo chiusura (lascia vuoto se non ci sono ferie):", value=st.session_state.ferie)
+    st.session_state.ferie = ferie_in
     st.divider()
     def to_excel(df):
         out = io.BytesIO()
