@@ -374,7 +374,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     with col_header:
         st.header(f"📍 Giro di Oggi ({ora_italiana.strftime('%d/%m/%Y')})")
     with col_refresh:
-        if st.button("🔄", use_container_width=True, help="Aggiorna giro", key="refresh_giro_btn"):
+        if st.button("🔄", use_container_width=True, help="Aggiorna giro", key="refresh_giro_v8"):
             calcola_piano_cached.clear()
             st.rerun()
     
@@ -387,7 +387,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                 for cliente_escluso in st.session_state.esclusi_oggi:
                     col_e1, col_e2 = st.columns([4, 1])
                     col_e1.write(cliente_escluso)
-                    if col_e2.button("♻️", key=f"restore_{cliente_escluso}", help="Ripristina"):
+                    if col_e2.button("♻️", key=f"restore_v8_{cliente_escluso}", help="Ripristina"):
                         st.session_state.esclusi_oggi.remove(cliente_escluso)
                         calcola_piano_cached.clear()
                         st.rerun()
@@ -468,7 +468,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             if route_coords:
                 m.fit_bounds(route_coords)
             
-            st_folium(m, width="100%", height=400, key="map_giro_oggi")
+            st_folium(m, width="100%", height=400, key="map_giro_oggi_v8")
             
             st.divider()
             
@@ -496,13 +496,13 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                     
                     with col3:
                         # Pulsante per escludere dal giro
-                        if st.button("❌", key=f"escludi_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
+                        if st.button("❌", key=f"escludi_v8_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
                             st.session_state.esclusi_oggi.append(tappa['nome cliente'])
                             calcola_piano_cached.clear()
                             st.rerun()
                         
                         # Pulsante per aprire scheda cliente
-                        if st.button("👤", key=f"scheda_{tappa['nome cliente']}", help="Apri scheda cliente"):
+                        if st.button("👤", key=f"scheda_v8_{tappa['nome cliente']}", help="Apri scheda cliente"):
                             st.session_state.cliente_selezionato = tappa['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
@@ -548,7 +548,7 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v7")
+    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v8")
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati":
         df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
@@ -564,7 +564,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
                 popup=row['nome cliente'], 
                 icon=folium.Icon(color=c, icon="user")
             ).add_to(m)
-        output = st_folium(m, width="100%", height=600, key="main_map_v7")
+        output = st_folium(m, width="100%", height=600, key="main_map_v8")
         cl = output.get("last_object_clicked_popup")
         if cl:
             if st.session_state.last_map_click == cl:
@@ -583,7 +583,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
     opzioni = [""] + nomi_reali
     idx_def = opzioni.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in opzioni else 0
-    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v7")
+    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v8")
     
     if scelto != "":
         st.session_state.cliente_selezionato = scelto
@@ -612,14 +612,14 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
-            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v7"):
+            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v8"):
                 st.session_state.show_quick_report = True
             if st.session_state.show_quick_report:
                 cr1, cr2 = st.columns([1, 2])
-                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v7")
-                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v7")
+                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v8")
+                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v8")
                 c_save, c_cancel = st.columns(2)
-                if c_save.button("💾 SALVA", key="save_rep_v7", use_container_width=True):
+                if c_save.button("💾 SALVA", key="save_rep_v8", use_container_width=True):
                     nuovo = f"[{dv.strftime('%d/%m/%Y')}] {rt}"
                     vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
                     st.session_state.df_master.at[idx, 'storico report'] = nuovo + "\n\n" + vecchio if vecchio != "nan" and vecchio.strip() != "" else nuovo
@@ -628,12 +628,12 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                         st.session_state.show_quick_report = False
                         st.success("✅ Salvato!")
                         st.rerun()
-                if c_cancel.button("❌ Annulla", key="can_rep_v7", use_container_width=True):
+                if c_cancel.button("❌ Annulla", key="can_rep_v8", use_container_width=True):
                     st.session_state.show_quick_report = False
                     st.rerun()
 
         st.divider()
-        with st.form("edit_anag_v7"):
+        with st.form("edit_anag_v8"):
             st.subheader("✏️ Modifica Dati Cliente")
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
@@ -665,9 +665,9 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.expander("🗑️ ELIMINA CLIENTE"):
             st.warning(f"⚠️ Eliminazione di **{scelto}** è DEFINITIVA.")
-            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v7")
+            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v8")
             if conferma_del:
-                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v7"):
+                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v8"):
                     st.session_state.df_master = st.session_state.df_master.drop(idx)
                     if save_to_gsheets(st.session_state.df_master):
                         st.session_state.cliente_selezionato = None
@@ -922,7 +922,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         if save_config_cloud("GPS", gps_base['latitude'], gps_base['longitude']): 
             st.success("✅ Base GPS aggiornata!")
             st.rerun()
-    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v7")
+    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v8")
     if nc != st.session_state.start_city:
         co = get_coords(nc)
         if co and save_config_cloud(nc, co[0], co[1]): 
@@ -940,7 +940,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
     st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE", value=st.session_state.attiva_ferie)
-    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v7")
+    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v8")
     
     if isinstance(ferie_in, (list, tuple)):
         st.session_state.ferie = list(ferie_in)
@@ -968,10 +968,10 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         file_name=f"crm_export_{ora_italiana.strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
-        key="export_excel_v7"
+        key="export_excel_v8"
     )
     
-    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True, key="reload_cloud_v7"):
+    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True, key="reload_cloud_v8"):
         st.cache_data.clear()
         st.session_state.df_master = fetch_data()
         st.success("✅ Dati ricaricati!")
@@ -991,13 +991,13 @@ elif st.session_state.active_tab == "📅 Agenda":
     data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     col_p, col_t, col_n = st.columns([1, 2, 1])
     
-    if col_p.button("⬅️ Precedente", key="agg_p_v7", use_container_width=True):
+    if col_p.button("⬅️ Precedente", key="agg_p_v8", use_container_width=True):
         st.session_state.current_week_index -= 1
         st.rerun()
     
     col_t.markdown(f"<h3 style='text-align: center;'>📅 {etichette_settimane[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
     
-    if col_n.button("Successiva ➡️", key="agg_n_v7", use_container_width=True):
+    if col_n.button("Successiva ➡️", key="agg_n_v8", use_container_width=True):
         st.session_state.current_week_index += 1
         st.rerun()
     
@@ -1034,7 +1034,7 @@ elif st.session_state.active_tab == "📅 Agenda":
                         icona = "📌" if t.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
                         st.caption(f"{icona} {t['ora_arrivo']}")
                         
-                        if st.button(t['nome cliente'], key=f"ag_v7_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
+                        if st.button(t['nome cliente'], key=f"ag_v8_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
                             st.session_state.cliente_selezionato = t['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
