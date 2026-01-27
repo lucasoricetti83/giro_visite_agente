@@ -27,6 +27,8 @@ def save_to_gsheets(df):
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo', 'tipo_tappa', 'color']]
         conn.update(spreadsheet=URL_FOGLIO, data=df[cols_to_save])
         fetch_data.clear()
+        calcola_piano_cached.clear()
+        
         return True
     except Exception as e:
         st.error(f"❌ Errore salvataggio: {str(e)}")
@@ -274,7 +276,7 @@ for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': 
 
 # --- 4. LOGICA CALCOLO GIRO ---
 @st.cache_data(ttl=300)
-def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fine, pausa_inizio, pausa_fine, durata_v, start_lat, start_lon):
+def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fine, pausa_inizio, pausa_fine, durata_v, start_lat, start_lon, data_hash):
     df_sim = _df.copy()
     oggi_dt = ora_italiana
     lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
@@ -328,6 +330,8 @@ def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fin
     return agenda_risultato, lun_ref, etichette
 
 def calcola_piano():
+    data_hash = hash(str(st.session_state.df_master['appuntamento'].sum()))
+    
     return calcola_piano_cached(st.session_state.df_master, st.session_state.attiva_ferie, st.session_state.ferie, st.session_state.esclusi_oggi, st.session_state.h_inizio, st.session_state.h_fine, st.session_state.pausa_inizio, st.session_state.pausa_fine, st.session_state.durata_v, st.session_state.start_lat, st.session_state.start_lon)
 
 # --- 5. INTERFACCIA ---
