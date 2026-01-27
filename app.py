@@ -330,10 +330,26 @@ def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fin
     return agenda_risultato, lun_ref, etichette
 
 def calcola_piano():
-    data_hash = hash(str(st.session_state.df_master['appuntamento'].sum()))
+    """Wrapper per calcola_piano_cached - include hash per invalidare cache"""
+    # Crea hash basato sul numero di appuntamenti (NON usare .sum() con datetime!)
+    num_appuntamenti = st.session_state.df_master['appuntamento'].notna().sum()
+    num_clienti = len(st.session_state.df_master)
+    data_hash = hash(f"{num_clienti}_{num_appuntamenti}")
     
-    return calcola_piano_cached(st.session_state.df_master, st.session_state.attiva_ferie, st.session_state.ferie, st.session_state.esclusi_oggi, st.session_state.h_inizio, st.session_state.h_fine, st.session_state.pausa_inizio, st.session_state.pausa_fine, st.session_state.durata_v, st.session_state.start_lat, st.session_state.start_lon)
-
+    return calcola_piano_cached(
+        st.session_state.df_master, 
+        st.session_state.attiva_ferie, 
+        st.session_state.ferie, 
+        st.session_state.esclusi_oggi, 
+        st.session_state.h_inizio, 
+        st.session_state.h_fine, 
+        st.session_state.pausa_inizio, 
+        st.session_state.pausa_fine, 
+        st.session_state.durata_v, 
+        st.session_state.start_lat, 
+        st.session_state.start_lon,
+        data_hash)
+    
 # --- 5. INTERFACCIA ---
 nav = st.columns(6)
 menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
