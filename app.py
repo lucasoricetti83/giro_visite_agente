@@ -346,7 +346,11 @@ agenda, lun_base, etichette_settimane = calcola_piano()
 
 # --- TAB: GIRO OGGI ---
 if st.session_state.active_tab == "🚀 Giro Oggi":
-    st.header(f"📍 Giro di Oggi ({ora_italiana.strftime('%d/%m/%Y')})")
+    col_header, col_refresh = st.columns([5, 1])
+col_header.subheader(f"📍 Giro di Oggi ({ora_italiana.strftime('%d/%m/%Y')})")
+if col_refresh.button("🔄", use_container_width=True, help="Aggiorna il giro se hai modificato appuntamenti", key="refresh_giro_btn"):
+    calcola_piano_cached.clear()
+    st.rerun()
     idx_g = ora_italiana.weekday()
     if idx_g < 5:
         if st.session_state.esclusi_oggi:
