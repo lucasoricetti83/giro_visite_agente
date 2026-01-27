@@ -373,32 +373,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     idx_g = ora_italiana.weekday()
     if idx_g < 5:
         if st.session_state.esclusi_oggi:
-            with st.expander(f"⚠️ {len(st.session_state.esclusi_oggi)} Clienti esclusi"):
-                for e in st.session_state.esclusi_oggi:
-                    ce1, ce2 = st.columns([3, 1])
-                    ce1.write(f"❌ {e}")
-                    if ce2.button("Ripristina", key=f"res_{e}"): st.session_state.esclusi_oggi.remove(e); st.rerun()
-        tappe = agenda[2][idx_g]
-        if tappe:
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                for t in tappe:
-                    with st.container(border=True):
-                        cn, cs = st.columns([4, 1])
-                        cn.write(f"🕒 **{t['ora_arrivo']}** - {t['nome cliente']}")
-                        if cs.button("🚫", key=f"sk_{t['nome cliente']}"): st.session_state.esclusi_oggi.append(t['nome cliente']); st.rerun()
-                        st.caption(f"📍 {t['indirizzo']}")
-                        cols = st.columns(4)
-                        cols[0].link_button("🚗", f"https://www.google.com/maps/dir/?api=1&destination={t['latitude']},{t['longitude']}")
-                        if t.get('cellulare'): cols[1].link_button("📱", f"tel:{t['cellulare']}")
-                        if cols[3].button("👤", key=f"go_{t['nome cliente']}"): st.session_state.cliente_selezionato = t['nome cliente']; st.session_state.active_tab = "👤 Anagrafica"; st.rerun()
-            with c2: 
-                m_oggi = folium.Map(location=[tappe[0]['latitude'], tappe[0]['longitude']], zoom_start=10)
-                for i, t in enumerate(tappe):
-                    folium.Marker([t['latitude'], t['longitude']], popup=t['nome cliente'], tooltip=f"{i+1}. {t['nome cliente']}").add_to(m_oggi)
-                st_folium(m_oggi, width="100%", height=600, key="map_oggi_v7")
-        else: st.info("✅ Nessuna visita prevista per oggi.")
-    else: st.info("🏖️ Oggi è fine settimana!")
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
