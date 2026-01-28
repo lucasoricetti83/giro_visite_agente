@@ -313,18 +313,26 @@ for key, val in {'h_inizio': time(9, 0), 'h_fine': time(18, 0), 'pausa_inizio': 
     if key not in st.session_state: 
         st.session_state[key] = val
 
+# Giorni lavorativi (default: Lun-Ven)
+if 'giorni_lavorativi' not in st.session_state:
+    st.session_state.giorni_lavorativi = [0, 1, 2, 3, 4]  # 0=Lunedì, 1=Martedì, ..., 6=Domenica
+
 # --- 4. LOGICA CALCOLO GIRO ---
 @st.cache_data(ttl=300)
-def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fine, pausa_inizio, pausa_fine, durata_v, start_lat, start_lon, data_hash):
+def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fine, pausa_inizio, pausa_fine, durata_v, start_lat, start_lon, giorni_lavorativi, data_hash):
     df_sim = _df.copy()
     oggi_dt = ora_italiana
     lun_corrente = oggi_dt - timedelta(days=oggi_dt.weekday())
     lun_ref = lun_corrente - timedelta(weeks=2)
-    agenda_risultato = {i: {g: [] for g in range(5)} for i in range(11)}
+    agenda_risultato = {i: {g: [] for g in range(7)} for i in range(11)}  # 7 giorni invece di 5
     etichette = [f"Passata (-{2-i})" if i < 2 else ("Settimana Corrente" if i == 2 else f"Futura (+{i-2})") for i in range(11)]
     
     for s in range(11):
-        for g in range(5):
+        for g in range(7):  # Tutti i 7 giorni
+            # Salta se non è un giorno lavorativo
+            if g not in giorni_lavorativi:
+                continue
+                
             dt_c = (lun_ref + timedelta(weeks=s, days=g)).date()
             if ferie_attive and ferie_date and len(ferie_date) == 2:
                 try:
@@ -377,7 +385,8 @@ def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fin
 def calcola_piano():
     num_appuntamenti = st.session_state.df_master['appuntamento'].notna().sum()
     num_clienti = len(st.session_state.df_master)
-    data_hash = hash(f"{num_clienti}_{num_appuntamenti}")
+    giorni_str = "_".join(map(str, st.session_state.giorni_lavorativi))
+    data_hash = hash(f"{num_clienti}_{num_appuntamenti}_{giorni_str}")
     
     return calcola_piano_cached(
         st.session_state.df_master, 
@@ -391,6 +400,7 @@ def calcola_piano():
         st.session_state.durata_v, 
         st.session_state.start_lat, 
         st.session_state.start_lon,
+        tuple(st.session_state.giorni_lavorativi),
         data_hash
     )
 
@@ -416,8 +426,9 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             st.rerun()
     
     idx_g = ora_italiana.weekday()
+    giorni_nomi_full = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
     
-    if idx_g < 5:
+    if idx_g in st.session_state.giorni_lavorativi:
         if st.session_state.esclusi_oggi:
             with st.expander(f"🚫 Clienti esclusi oggi ({len(st.session_state.esclusi_oggi)})", expanded=False):
                 for cliente_escluso in st.session_state.esclusi_oggi:
@@ -666,8 +677,48 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                     st.rerun()
     
     else:
-        st.warning("🏖️ Oggi è weekend! Il giro visite è attivo solo dal Lunedì al Venerdì.")
-        st.info("Consulta la sezione **📅 Agenda** per vedere le visite pianificate per la prossima settimana.")
+        # Giorno non lavorativo
+        st.warning(f"🏖️ Oggi è **{giorni_nomi_full[idx_g]}** - non è un giorno lavorativo configurato.")
+        
+        # Mostra prossimo giorno lavorativo
+        prossimo_giorno = None
+        for i in range(1, 8):
+            giorno_futuro = (idx_g + i) % 7
+            if giorno_futuro in st.session_state.giorni_lavorativi:
+                prossimo_giorno = giorni_nomi_full[giorno_futuro]
+                break
+        
+        if prossimo_giorno:
+            st.info(f"📅 Il prossimo giorno lavorativo è **{prossimo_giorno}**. Consulta l'**Agenda** per vedere le visite pianificate.")
+        
+        # Mostra comunque i clienti visitati oggi (anche se non è giorno lavorativo)
+        if st.session_state.visitati_oggi:
+            st.divider()
+            st.subheader(f"✅ Clienti Visitati Oggi ({len(st.session_state.visitati_oggi)})")
+            
+            for cliente_nome in st.session_state.visitati_oggi:
+                cliente_data = st.session_state.df_master[st.session_state.df_master['nome cliente'] == cliente_nome]
+                if not cliente_data.empty:
+                    row = cliente_data.iloc[0]
+                    
+                    with st.container(border=True):
+                        col1, col2, col3 = st.columns([3, 2, 1])
+                        
+                        with col1:
+                            st.markdown(f"### ✅ {cliente_nome}")
+                            st.success("**VISITATO**")
+                            if row.get('indirizzo'):
+                                st.caption(f"📍 {row['indirizzo']}")
+                        
+                        with col2:
+                            nav_url = f"https://www.google.com/maps/dir/?api=1&destination={row['latitude']},{row['longitude']}"
+                            st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
+                        
+                        with col3:
+                            if st.button("👤", key=f"scheda_nolav_{cliente_nome}", help="Apri scheda cliente"):
+                                st.session_state.cliente_selezionato = cliente_nome
+                                st.session_state.active_tab = "👤 Anagrafica"
+                                st.rerun()
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
@@ -966,6 +1017,30 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.session_state.durata_v = st.slider("Minuti per visita", 15, 120, st.session_state.durata_v)
     
     st.divider()
+    st.subheader("📅 Giorni Lavorativi")
+    st.caption("Seleziona i giorni in cui effettui le visite")
+    
+    giorni_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+    cols_giorni = st.columns(7)
+    
+    nuovi_giorni = []
+    for i, giorno in enumerate(giorni_nomi):
+        with cols_giorni[i]:
+            is_checked = i in st.session_state.giorni_lavorativi
+            if st.checkbox(giorno[:3], value=is_checked, key=f"giorno_lav_{i}"):
+                nuovi_giorni.append(i)
+    
+    # Aggiorna solo se c'è almeno un giorno selezionato
+    if nuovi_giorni:
+        st.session_state.giorni_lavorativi = sorted(nuovi_giorni)
+    else:
+        st.warning("⚠️ Seleziona almeno un giorno lavorativo!")
+    
+    # Mostra riepilogo
+    giorni_selezionati = [giorni_nomi[i] for i in st.session_state.giorni_lavorativi]
+    st.info(f"📅 Giorni attivi: **{', '.join(giorni_selezionati)}**")
+    
+    st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
     st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE", value=st.session_state.attiva_ferie)
     ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v9")
@@ -1027,17 +1102,21 @@ elif st.session_state.active_tab == "📅 Agenda":
     
     st.divider()
     
-    cols = st.columns(5)
-    g_nomi = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+    # Giorni della settimana configurati come lavorativi
+    g_nomi_tutti = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+    giorni_attivi = st.session_state.giorni_lavorativi
     
-    for i, g in enumerate(g_nomi):
-        dt_g = data_lunedi + timedelta(days=i)
+    # Crea colonne solo per i giorni lavorativi
+    cols = st.columns(len(giorni_attivi))
+    
+    for col_idx, giorno_idx in enumerate(giorni_attivi):
+        dt_g = data_lunedi + timedelta(days=giorno_idx)
         
-        with cols[i]:
-            st.subheader(f"{g}")
+        with cols[col_idx]:
+            st.subheader(f"{g_nomi_tutti[giorno_idx]}")
             st.caption(f"{dt_g.strftime('%d/%m/%Y')}")
             
-            tappe_giorno = agenda[st.session_state.current_week_index][i]
+            tappe_giorno = agenda[st.session_state.current_week_index][giorno_idx]
             
             if tappe_giorno:
                 num_app = sum(1 for t in tappe_giorno if t.get('tipo_tappa') == "📌 APPUNTAMENTO")
@@ -1055,7 +1134,7 @@ elif st.session_state.active_tab == "📅 Agenda":
                         icona = "📌" if t.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
                         st.caption(f"{icona} {t['ora_arrivo']}")
                         
-                        if st.button(t['nome cliente'], key=f"ag_v9_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
+                        if st.button(t['nome cliente'], key=f"ag_v9_{st.session_state.current_week_index}_{giorno_idx}_{t['nome cliente']}", use_container_width=True):
                             st.session_state.cliente_selezionato = t['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
@@ -1068,8 +1147,9 @@ elif st.session_state.active_tab == "📅 Agenda":
     st.divider()
     st.subheader("📊 Statistiche Settimana")
     
-    totale_visite = sum(len(agenda[st.session_state.current_week_index][g]) for g in range(5))
-    totale_app = sum(sum(1 for t in agenda[st.session_state.current_week_index][g] if t.get('tipo_tappa') == "📌 APPUNTAMENTO") for g in range(5))
+    # Calcola statistiche solo per i giorni lavorativi
+    totale_visite = sum(len(agenda[st.session_state.current_week_index][g]) for g in giorni_attivi)
+    totale_app = sum(sum(1 for t in agenda[st.session_state.current_week_index][g] if t.get('tipo_tappa') == "📌 APPUNTAMENTO") for g in giorni_attivi)
     totale_giro = totale_visite - totale_app
     
     stat_cols = st.columns(4)
@@ -1077,11 +1157,12 @@ elif st.session_state.active_tab == "📅 Agenda":
     stat_cols[1].metric("📌 Appuntamenti", totale_app)
     stat_cols[2].metric("🚗 Visite Giro", totale_giro)
     
-    media_giorno = totale_visite / 5 if totale_visite > 0 else 0
+    num_giorni = len(giorni_attivi)
+    media_giorno = totale_visite / num_giorni if totale_visite > 0 and num_giorni > 0 else 0
     stat_cols[3].metric("📈 Media/Giorno", f"{media_giorno:.1f}")
 
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.1")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.2")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
