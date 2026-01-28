@@ -13,6 +13,7 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Giro Visite CRM Pro", layout="wide")
 
 URL_FOGLIO = "https://docs.google.com/spreadsheets/d/1uNqrdMEeAJwL3hAV1y82xU1nlLyEyQ0A8S-Fhe8QPTs/edit?usp=sharing"
+NOME_FOGLIO = "Creare Portatour Personale con Google"
 
 @st.cache_resource
 def get_connection():
@@ -21,16 +22,37 @@ def get_connection():
 conn = get_connection()
 ora_italiana = datetime.now() + timedelta(hours=1)
 
-# --- FUNZIONI DI SALVATAGGIO ---
+# --- FUNZIONI DI SALVATAGGIO (CORRETTE) ---
 def save_to_gsheets(df):
     try:
         cols_to_save = [c for c in df.columns if c not in ['g_p', 'ora_arrivo', 'tipo_tappa', 'color']]
-        conn.update(spreadsheet=URL_FOGLIO, data=df[cols_to_save])
+        df_to_save = df[cols_to_save].copy()
+        
+        # Converti le date in stringhe per evitare problemi di serializzazione
+        for col in df_to_save.columns:
+            if df_to_save[col].dtype == 'datetime64[ns]' or 'datetime' in str(df_to_save[col].dtype):
+                df_to_save[col] = df_to_save[col].apply(
+                    lambda x: x.strftime('%d/%m/%Y %H:%M') if pd.notnull(x) and x > pd.Timestamp('2000-01-01') else ''
+                )
+        
+        # Sostituisci NaN con stringa vuota
+        df_to_save = df_to_save.fillna('')
+        
+        # Salva su Google Sheets - USA IL NOME CORRETTO DEL FOGLIO
+        conn.update(spreadsheet=URL_FOGLIO, worksheet=NOME_FOGLIO, data=df_to_save)
+        
+        # Invalida le cache
         fetch_data.clear()
         calcola_piano_cached.clear()
+        
+        # Aggiorna anche il df_master in session_state per coerenza
+        st.session_state.df_master = fetch_data()
+        
         return True
     except Exception as e:
         st.error(f"❌ Errore salvataggio: {str(e)}")
+        import traceback
+        st.error(f"Dettagli: {traceback.format_exc()}")
         return False
 
 def save_config_cloud(city, lat, lon):
@@ -85,7 +107,7 @@ def reverse_geocode(lat, lon):
 @st.cache_data(ttl=600) 
 def fetch_data():
     try:
-        df = conn.read(spreadsheet=URL_FOGLIO)
+        df = conn.read(spreadsheet=URL_FOGLIO, worksheet=NOME_FOGLIO)
         df.columns = df.columns.str.strip().str.lower()
         colonne = ['contatto', 'referente', 'posizione referente', 'mail', 'telefono', 'cellulare', 'note', 'storico report', 'visitare', 'indirizzo', 'cap', 'provincia', 'ultima visita', 'frequenza (giorni)', 'nome cliente', 'latitude', 'longitude', 'appuntamento']
         for col in colonne:
@@ -150,7 +172,6 @@ def render_gps_button(button_id):
                 status.style.backgroundColor = '#e8f5e9';
                 status.style.color = '#2e7d32';
                 
-                // Invia i dati a Streamlit usando postMessage
                 const data = {{
                     latitude: lat,
                     longitude: lon,
@@ -158,16 +179,13 @@ def render_gps_button(button_id):
                     timestamp: new Date().getTime()
                 }};
                 
-                // Prova diversi metodi di comunicazione
                 window.parent.postMessage({{
                     isStreamlitMessage: true,
                     type: 'streamlit:setComponentValue',
                     data: data
                 }}, '*');
                 
-                // Fallback: salva in sessionStorage
                 sessionStorage.setItem('gps_data_{button_id}', JSON.stringify(data));
-                
                 console.log('GPS data sent:', data);
             }},
             function(error) {{
@@ -198,7 +216,6 @@ def render_gps_button(button_id):
         );
     }}
     
-    // Auto-check sessionStorage al caricamento
     window.addEventListener('load', function() {{
         const savedData = sessionStorage.getItem('gps_data_{button_id}');
         if (savedData) {{
@@ -214,9 +231,7 @@ def render_gps_button(button_id):
     
     result = st.components.v1.html(html_code, height=130)
     
-    # Prova a leggere da sessionStorage come fallback
     if result is None:
-        # Aggiungi un piccolo script per recuperare i dati
         check_script = f"""
         <script>
         const data = sessionStorage.getItem('gps_data_{button_id}');
@@ -336,8 +351,6 @@ def calcola_piano_cached(_df, ferie_attive, ferie_date, esclusi, h_inizio, h_fin
     return agenda_risultato, lun_ref, etichette
 
 def calcola_piano():
-    """Wrapper per calcola_piano_cached - include hash per invalidare cache"""
-    # Crea hash basato sul numero di appuntamenti (NON usare .sum() con datetime!)
     num_appuntamenti = st.session_state.df_master['appuntamento'].notna().sum()
     num_clienti = len(st.session_state.df_master)
     data_hash = hash(f"{num_clienti}_{num_appuntamenti}")
@@ -374,29 +387,26 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     with col_header:
         st.header(f"📍 Giro di Oggi ({ora_italiana.strftime('%d/%m/%Y')})")
     with col_refresh:
-        if st.button("🔄", use_container_width=True, help="Aggiorna giro", key="refresh_giro_v8"):
+        if st.button("🔄", use_container_width=True, help="Aggiorna giro", key="refresh_giro_v9"):
             calcola_piano_cached.clear()
             st.rerun()
     
     idx_g = ora_italiana.weekday()
     
     if idx_g < 5:
-        # Mostra clienti esclusi se presenti
         if st.session_state.esclusi_oggi:
             with st.expander(f"🚫 Clienti esclusi oggi ({len(st.session_state.esclusi_oggi)})", expanded=False):
                 for cliente_escluso in st.session_state.esclusi_oggi:
                     col_e1, col_e2 = st.columns([4, 1])
                     col_e1.write(cliente_escluso)
-                    if col_e2.button("♻️", key=f"restore_v8_{cliente_escluso}", help="Ripristina"):
+                    if col_e2.button("♻️", key=f"restore_v9_{cliente_escluso}", help="Ripristina"):
                         st.session_state.esclusi_oggi.remove(cliente_escluso)
                         calcola_piano_cached.clear()
                         st.rerun()
         
-        # Recupera le tappe di oggi
-        tappe_oggi = agenda[2][idx_g]  # Settimana corrente (indice 2), giorno corrente
+        tappe_oggi = agenda[2][idx_g]
         
         if tappe_oggi:
-            # Statistiche rapide
             num_appuntamenti = sum(1 for t in tappe_oggi if t.get('tipo_tappa') == "📌 APPUNTAMENTO")
             num_giro = len(tappe_oggi) - num_appuntamenti
             
@@ -406,27 +416,18 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             col_stat3.metric("🚗 Visite Giro", num_giro)
             
             st.divider()
-            
-            # Mappa del giro
             st.subheader("🗺️ Percorso di Oggi")
             
-            # Crea mappa centrata sul punto di partenza
-            m = folium.Map(
-                location=[st.session_state.start_lat, st.session_state.start_lon], 
-                zoom_start=10
-            )
+            m = folium.Map(location=[st.session_state.start_lat, st.session_state.start_lon], zoom_start=10)
             
-            # Aggiungi marker punto di partenza
             folium.Marker(
                 location=[st.session_state.start_lat, st.session_state.start_lon],
                 popup="🏠 Punto di Partenza",
                 icon=folium.Icon(color="blue", icon="home")
             ).add_to(m)
             
-            # Coordinate per la polyline del percorso
             route_coords = [(st.session_state.start_lat, st.session_state.start_lon)]
             
-            # Aggiungi marker per ogni tappa
             for i, tappa in enumerate(tappe_oggi, 1):
                 color = "red" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "green"
                 icon_symbol = "star" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "user"
@@ -444,10 +445,8 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                     icon=folium.Icon(color=color, icon=icon_symbol)
                 ).add_to(m)
                 
-                # Aggiungi alla route
                 route_coords.append((tappa['latitude'], tappa['longitude']))
                 
-                # Aggiungi numero tappa
                 folium.Marker(
                     location=[tappa['latitude'], tappa['longitude']],
                     icon=folium.DivIcon(
@@ -455,24 +454,15 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                     )
                 ).add_to(m)
             
-            # Disegna percorso
             if len(route_coords) > 1:
-                folium.PolyLine(
-                    route_coords,
-                    weight=3,
-                    color='#3498db',
-                    opacity=0.8
-                ).add_to(m)
+                folium.PolyLine(route_coords, weight=3, color='#3498db', opacity=0.8).add_to(m)
             
-            # Fit bounds per mostrare tutti i marker
             if route_coords:
                 m.fit_bounds(route_coords)
             
-            st_folium(m, width="100%", height=400, key="map_giro_oggi_v8")
+            st_folium(m, width="100%", height=400, key="map_giro_oggi_v9")
             
             st.divider()
-            
-            # Lista tappe dettagliata
             st.subheader("📋 Dettaglio Tappe")
             
             for i, tappa in enumerate(tappe_oggi, 1):
@@ -487,7 +477,6 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                             st.caption(f"📍 {tappa['indirizzo']}")
                     
                     with col2:
-                        # Pulsanti azione
                         nav_url = f"https://www.google.com/maps/dir/?api=1&destination={tappa['latitude']},{tappa['longitude']}"
                         st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
                         
@@ -495,24 +484,19 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                             st.link_button(f"📱 {tappa['cellulare']}", f"tel:{tappa['cellulare']}", use_container_width=True)
                     
                     with col3:
-                        # Pulsante per escludere dal giro
-                        if st.button("❌", key=f"escludi_v8_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
+                        if st.button("❌", key=f"escludi_v9_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
                             st.session_state.esclusi_oggi.append(tappa['nome cliente'])
                             calcola_piano_cached.clear()
                             st.rerun()
                         
-                        # Pulsante per aprire scheda cliente
-                        if st.button("👤", key=f"scheda_v8_{tappa['nome cliente']}", help="Apri scheda cliente"):
+                        if st.button("👤", key=f"scheda_v9_{tappa['nome cliente']}", help="Apri scheda cliente"):
                             st.session_state.cliente_selezionato = tappa['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
             
             st.divider()
-            
-            # Navigazione completa
             st.subheader("🧭 Navigazione Completa")
             
-            # Costruisci URL per navigazione multi-tappa
             if tappe_oggi:
                 waypoints = "|".join([f"{t['latitude']},{t['longitude']}" for t in tappe_oggi[:-1]]) if len(tappe_oggi) > 1 else ""
                 destination = f"{tappe_oggi[-1]['latitude']},{tappe_oggi[-1]['longitude']}"
@@ -541,14 +525,13 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                     st.rerun()
     
     else:
-        # Weekend
         st.warning("🏖️ Oggi è weekend! Il giro visite è attivo solo dal Lunedì al Venerdì.")
         st.info("Consulta la sezione **📅 Agenda** per vedere le visite pianificate per la prossima settimana.")
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
     st.header("🗺️ Mappa Interattiva Clienti")
-    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v8")
+    filtro_tipo = st.radio("Filtro:", ["Tutti", "Visitati", "Mai Visitati"], horizontal=True, key="f_map_v9")
     df_m = st.session_state.df_master.copy()
     if filtro_tipo == "Visitati":
         df_m = df_m[df_m['ultima visita'] > pd.Timestamp('2000-01-01')]
@@ -564,7 +547,7 @@ elif st.session_state.active_tab == "🗺️ Mappa Clienti":
                 popup=row['nome cliente'], 
                 icon=folium.Icon(color=c, icon="user")
             ).add_to(m)
-        output = st_folium(m, width="100%", height=600, key="main_map_v8")
+        output = st_folium(m, width="100%", height=600, key="main_map_v9")
         cl = output.get("last_object_clicked_popup")
         if cl:
             if st.session_state.last_map_click == cl:
@@ -583,7 +566,7 @@ elif st.session_state.active_tab == "👤 Anagrafica":
     nomi_reali = sorted(st.session_state.df_master['nome cliente'].unique())
     opzioni = [""] + nomi_reali
     idx_def = opzioni.index(st.session_state.cliente_selezionato) if st.session_state.cliente_selezionato in opzioni else 0
-    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v8")
+    scelto = st.selectbox("Cerca cliente:", opzioni, index=idx_def, key="sel_ana_v9")
     
     if scelto != "":
         st.session_state.cliente_selezionato = scelto
@@ -612,14 +595,14 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.container(border=True):
             st.subheader("🏁 Azione Rapida Fine Visita")
-            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v8"):
+            if st.button("✅ APPENA VISITATO", type="primary", use_container_width=True, key="btn_visit_v9"):
                 st.session_state.show_quick_report = True
             if st.session_state.show_quick_report:
                 cr1, cr2 = st.columns([1, 2])
-                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v8")
-                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v8")
+                dv = cr1.date_input("Data visita:", value=ora_italiana.date(), key="dv_in_v9")
+                rt = st.text_area("Report incontri:", placeholder="Cosa è emerso?", key="rt_in_v9")
                 c_save, c_cancel = st.columns(2)
-                if c_save.button("💾 SALVA", key="save_rep_v8", use_container_width=True):
+                if c_save.button("💾 SALVA", key="save_rep_v9", use_container_width=True):
                     nuovo = f"[{dv.strftime('%d/%m/%Y')}] {rt}"
                     vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
                     st.session_state.df_master.at[idx, 'storico report'] = nuovo + "\n\n" + vecchio if vecchio != "nan" and vecchio.strip() != "" else nuovo
@@ -628,12 +611,12 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                         st.session_state.show_quick_report = False
                         st.success("✅ Salvato!")
                         st.rerun()
-                if c_cancel.button("❌ Annulla", key="can_rep_v8", use_container_width=True):
+                if c_cancel.button("❌ Annulla", key="can_rep_v9", use_container_width=True):
                     st.session_state.show_quick_report = False
                     st.rerun()
 
         st.divider()
-        with st.form("edit_anag_v8"):
+        with st.form("edit_anag_v9"):
             st.subheader("✏️ Modifica Dati Cliente")
             c1, c2 = st.columns(2)
             un = c1.text_input("Ragione Sociale", d['nome cliente'])
@@ -665,9 +648,9 @@ elif st.session_state.active_tab == "👤 Anagrafica":
         st.divider()
         with st.expander("🗑️ ELIMINA CLIENTE"):
             st.warning(f"⚠️ Eliminazione di **{scelto}** è DEFINITIVA.")
-            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v8")
+            conferma_del = st.checkbox("Confermo eliminazione", key="check_del_v9")
             if conferma_del:
-                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v8"):
+                if st.button("❌ ELIMINA DEFINITIVAMENTE", type="primary", use_container_width=True, key="btn_del_v9"):
                     st.session_state.df_master = st.session_state.df_master.drop(idx)
                     if save_to_gsheets(st.session_state.df_master):
                         st.session_state.cliente_selezionato = None
@@ -678,7 +661,6 @@ elif st.session_state.active_tab == "👤 Anagrafica":
 elif st.session_state.active_tab == "➕ Nuovo Cliente":
     st.header("➕ Registrazione Nuovo Cliente")
     
-    # --- SEZIONE GPS ---
     st.subheader("📍 Acquisizione Posizione GPS")
     
     col_gps1, col_gps2 = st.columns([3, 1])
@@ -686,22 +668,15 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     with col_gps1:
         gps_result = render_gps_button("new_client_gps")
     
-    # Processa risultato GPS
     if gps_result:
         if isinstance(gps_result, dict) and 'latitude' in gps_result and 'longitude' in gps_result:
-            # Salva coordinate
             st.session_state.new_coords = (gps_result['latitude'], gps_result['longitude'])
-            
-            # Controlla se non abbiamo già fatto il reverse geocoding per queste coordinate
             coords_key = f"{gps_result['latitude']:.6f}_{gps_result['longitude']:.6f}"
             
             if st.session_state.get('last_geocoded_coords') != coords_key:
                 st.session_state.last_geocoded_coords = coords_key
-                
-                # Fai reverse geocoding
                 with st.spinner("🔍 Conversione coordinate in indirizzo..."):
                     addr_info = reverse_geocode(gps_result['latitude'], gps_result['longitude'])
-                    
                     if addr_info:
                         st.session_state.gps_address = addr_info
                         st.success(f"✅ Indirizzo trovato: {addr_info['indirizzo_completo']}")
@@ -709,15 +684,9 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         st.session_state.gps_address = {}
                         st.warning("⚠️ Coordinate GPS acquisite ma indirizzo non trovato. Compila manualmente.")
     
-    # Mostra coordinate salvate
     if st.session_state.get('new_coords'):
         with col_gps2:
-            st.metric(
-                "📍 Coordinate", 
-                f"{st.session_state.new_coords[0]:.5f}\n{st.session_state.new_coords[1]:.5f}",
-                help="Latitudine e Longitudine acquisite"
-            )
-            
+            st.metric("📍 Coordinate", f"{st.session_state.new_coords[0]:.5f}\n{st.session_state.new_coords[1]:.5f}", help="Latitudine e Longitudine acquisite")
             if st.button("🗑️ Rimuovi GPS", use_container_width=True, key="clear_gps_nc"):
                 st.session_state.new_coords = None
                 st.session_state.gps_address = {}
@@ -726,77 +695,38 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
     
     st.divider()
     
-    # --- FORM NUOVO CLIENTE ---
-    with st.form("new_client_form_v8", clear_on_submit=False):
+    with st.form("new_client_form_v9", clear_on_submit=False):
         st.subheader("📝 Informazioni Cliente")
         
         c1, c2 = st.columns(2)
-        
-        # Dati principali
-        nome_cliente = c1.text_input("Ragione Sociale *", key="nc_nome_v8")
-        freq_visite = c1.number_input("Frequenza Visite (giorni)", min_value=1, value=30, key="nc_freq_v8")
-        contatti_ref = c1.text_input("Referente / Contatti", key="nc_ref_v8")
-        
-        telefono = c2.text_input("Telefono", key="nc_tel_v8")
-        cellulare = c2.text_input("Cellulare", key="nc_cell_v8")
-        email = c2.text_input("Email", key="nc_email_v8")
+        nome_cliente = c1.text_input("Ragione Sociale *", key="nc_nome_v9")
+        freq_visite = c1.number_input("Frequenza Visite (giorni)", min_value=1, value=30, key="nc_freq_v9")
+        contatti_ref = c1.text_input("Referente / Contatti", key="nc_ref_v9")
+        telefono = c2.text_input("Telefono", key="nc_tel_v9")
+        cellulare = c2.text_input("Cellulare", key="nc_cell_v9")
+        email = c2.text_input("Email", key="nc_email_v9")
         
         st.divider()
         st.subheader("📍 Indirizzo")
         
-        # Pre-compila con dati GPS se disponibili
         gps_addr = st.session_state.get('gps_address', {})
-        
         if gps_addr:
             st.info("💡 Campi compilati automaticamente dal GPS. Verifica e correggi se necessario.")
         
-        via_civico = st.text_input(
-            "Via e Numero Civico", 
-            value=gps_addr.get('via', ''),
-            key="nc_via_v8"
-        )
+        via_civico = st.text_input("Via e Numero Civico", value=gps_addr.get('via', ''), key="nc_via_v9")
         
         addr_cols = st.columns([1, 2, 1])
-        cap = addr_cols[0].text_input(
-            "CAP", 
-            value=gps_addr.get('cap', ''),
-            key="nc_cap_v8"
-        )
-        citta = addr_cols[1].text_input(
-            "Città *", 
-            value=gps_addr.get('citta', ''),
-            key="nc_citta_v8"
-        )
-        provincia = addr_cols[2].text_input(
-            "Provincia", 
-            value=gps_addr.get('provincia', ''),
-            max_chars=2,
-            key="nc_prov_v8"
-        )
+        cap = addr_cols[0].text_input("CAP", value=gps_addr.get('cap', ''), key="nc_cap_v9")
+        citta = addr_cols[1].text_input("Città *", value=gps_addr.get('citta', ''), key="nc_citta_v9")
+        provincia = addr_cols[2].text_input("Provincia", value=gps_addr.get('provincia', ''), max_chars=2, key="nc_prov_v9")
         
         st.divider()
-        note_iniziali = st.text_area(
-            "Note Iniziali (opzionale)", 
-            placeholder="Aggiungi eventuali note sul cliente...",
-            height=100,
-            key="nc_note_v8"
-        )
+        note_iniziali = st.text_area("Note Iniziali (opzionale)", placeholder="Aggiungi eventuali note sul cliente...", height=100, key="nc_note_v9")
         
-        # Bottoni azione
         col_btn1, col_btn2, col_btn3 = st.columns([2, 1, 1])
+        btn_salva = col_btn1.form_submit_button("✅ CREA E SALVA CLIENTE", use_container_width=True, type="primary")
+        btn_reset = col_btn2.form_submit_button("🔄 Svuota Form", use_container_width=True)
         
-        btn_salva = col_btn1.form_submit_button(
-            "✅ CREA E SALVA CLIENTE", 
-            use_container_width=True, 
-            type="primary"
-        )
-        
-        btn_reset = col_btn2.form_submit_button(
-            "🔄 Svuota Form", 
-            use_container_width=True
-        )
-        
-        # Gestione submit
         if btn_reset:
             st.session_state.new_coords = None
             st.session_state.gps_address = {}
@@ -804,7 +734,6 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
             st.rerun()
         
         if btn_salva:
-            # Validazione
             errori = []
             if not nome_cliente or nome_cliente.strip() == "":
                 errori.append("❌ Inserisci la Ragione Sociale")
@@ -815,25 +744,18 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                 for err in errori:
                     st.error(err)
             else:
-                # Determina coordinate
                 coordinate_finale = None
                 
                 if st.session_state.get('new_coords'):
-                    # Usa coordinate GPS
                     coordinate_finale = st.session_state.new_coords
                     st.info("📍 Usando coordinate da GPS")
                 else:
-                    # Geocoding da indirizzo
                     indirizzo_completo = f"{via_civico}, {cap} {citta} {provincia}".strip()
-                    
                     with st.spinner("🔍 Ricerca coordinate da indirizzo..."):
                         coordinate_finale = get_coords(indirizzo_completo)
-                        
                         if not coordinate_finale:
-                            # Prova solo con la città
                             coordinate_finale = get_coords(citta)
                 
-                # Salva cliente
                 if coordinate_finale:
                     nuovo_cliente = {
                         'nome cliente': nome_cliente.strip(),
@@ -856,62 +778,21 @@ elif st.session_state.active_tab == "➕ Nuovo Cliente":
                         'posizione referente': ''
                     }
                     
-                    # Aggiungi al dataframe
-                    st.session_state.df_master = pd.concat(
-                        [st.session_state.df_master, pd.DataFrame([nuovo_cliente])], 
-                        ignore_index=True
-                    )
+                    st.session_state.df_master = pd.concat([st.session_state.df_master, pd.DataFrame([nuovo_cliente])], ignore_index=True)
                     
-                    # Salva su Google Sheets
                     if save_to_gsheets(st.session_state.df_master):
                         st.success(f"✅ Cliente **{nome_cliente}** creato con successo!")
-                        
-                        # Reset stato GPS
                         st.session_state.new_coords = None
                         st.session_state.gps_address = {}
                         st.session_state.last_geocoded_coords = None
                         st.session_state.cliente_selezionato = nome_cliente
-                        
-                        # Opzione per andare alla scheda
                         st.info("👉 Vai al tab 'Anagrafica' per vedere i dettagli del cliente")
-                        
                         time_module.sleep(2)
                         st.rerun()
                     else:
                         st.error("❌ Errore durante il salvataggio su Google Sheets")
                 else:
                     st.error("❌ Impossibile determinare le coordinate. Usa il GPS o verifica l'indirizzo inserito.")
-    
-    # Istruzioni
-    st.divider()
-    with st.expander("📖 Istruzioni d'uso", expanded=False):
-        st.markdown("""
-        ### 🎯 Metodo GPS (Consigliato se sei sul posto)
-        1. Clicca il pulsante **"🎯 Usa GPS Attuale"**
-        2. **Autorizza** il browser ad accedere alla posizione
-        3. Attendi che appaia il messaggio di conferma verde
-        4. I campi indirizzo verranno **compilati automaticamente**
-        5. Verifica e correggi eventuali dati se necessario
-        6. Compila gli altri campi obbligatori (Ragione Sociale)
-        7. Clicca **"✅ CREA E SALVA CLIENTE"**
-        
-        ### ✍️ Metodo Manuale
-        1. Compila **tutti i campi manualmente**
-        2. Il sistema cercherà le coordinate dall'indirizzo inserito
-        3. Clicca **"✅ CREA E SALVA CLIENTE"**
-        
-        ### ⚠️ Note Importanti
-        - Il GPS funziona solo su **HTTPS** o **localhost**
-        - La precisione dipende dal dispositivo (solitamente 5-50 metri)
-        - Se sei all'interno di un edificio, avvicinati a una finestra
-        - Puoi sempre modificare i dati auto-compilati dal GPS
-        - I campi contrassegnati con * sono **obbligatori**
-        
-        ### 🔧 Risoluzione Problemi
-        - **"Permesso negato"**: Autorizza la geolocalizzazione nelle impostazioni del browser
-        - **"Timeout"**: Riprova tra qualche secondo o spostati all'aperto
-        - **"Posizione non disponibile"**: Verifica che il GPS del dispositivo sia attivo
-        """)
 
 # --- TAB: PARAMETRI ---
 elif st.session_state.active_tab == "⚙️ Parametri":
@@ -922,7 +803,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         if save_config_cloud("GPS", gps_base['latitude'], gps_base['longitude']): 
             st.success("✅ Base GPS aggiornata!")
             st.rerun()
-    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v8")
+    nc = st.text_input("Città base:", st.session_state.start_city, key="city_input_v9")
     if nc != st.session_state.start_city:
         co = get_coords(nc)
         if co and save_config_cloud(nc, co[0], co[1]): 
@@ -940,7 +821,7 @@ elif st.session_state.active_tab == "⚙️ Parametri":
     st.divider()
     st.subheader("🏖️ Filtro Ferie / Chiusura")
     st.session_state.attiva_ferie = st.checkbox("ATTIVA FILTRO FERIE", value=st.session_state.attiva_ferie)
-    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v8")
+    ferie_in = st.date_input("Periodo chiusura:", value=st.session_state.ferie if st.session_state.ferie else [], key="f_in_v9")
     
     if isinstance(ferie_in, (list, tuple)):
         st.session_state.ferie = list(ferie_in)
@@ -962,16 +843,9 @@ elif st.session_state.active_tab == "⚙️ Parametri":
         return out.getvalue()
     
     col_exp1, col_exp2 = st.columns(2)
-    col_exp1.download_button(
-        "📥 Esporta Database Excel", 
-        data=to_excel(st.session_state.df_master), 
-        file_name=f"crm_export_{ora_italiana.strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="export_excel_v8"
-    )
+    col_exp1.download_button("📥 Esporta Database Excel", data=to_excel(st.session_state.df_master), file_name=f"crm_export_{ora_italiana.strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="export_excel_v9")
     
-    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True, key="reload_cloud_v8"):
+    if col_exp2.button("🔄 Ricarica da Cloud", use_container_width=True, key="reload_cloud_v9"):
         st.cache_data.clear()
         st.session_state.df_master = fetch_data()
         st.success("✅ Dati ricaricati!")
@@ -991,13 +865,13 @@ elif st.session_state.active_tab == "📅 Agenda":
     data_lunedi = lun_base + timedelta(weeks=st.session_state.current_week_index)
     col_p, col_t, col_n = st.columns([1, 2, 1])
     
-    if col_p.button("⬅️ Precedente", key="agg_p_v8", use_container_width=True):
+    if col_p.button("⬅️ Precedente", key="agg_p_v9", use_container_width=True):
         st.session_state.current_week_index -= 1
         st.rerun()
     
     col_t.markdown(f"<h3 style='text-align: center;'>📅 {etichette_settimane[st.session_state.current_week_index]}</h3>", unsafe_allow_html=True)
     
-    if col_n.button("Successiva ➡️", key="agg_n_v8", use_container_width=True):
+    if col_n.button("Successiva ➡️", key="agg_n_v9", use_container_width=True):
         st.session_state.current_week_index += 1
         st.rerun()
     
@@ -1034,7 +908,7 @@ elif st.session_state.active_tab == "📅 Agenda":
                         icona = "📌" if t.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
                         st.caption(f"{icona} {t['ora_arrivo']}")
                         
-                        if st.button(t['nome cliente'], key=f"ag_v8_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
+                        if st.button(t['nome cliente'], key=f"ag_v9_{st.session_state.current_week_index}_{i}_{t['nome cliente']}", use_container_width=True):
                             st.session_state.cliente_selezionato = t['nome cliente']
                             st.session_state.active_tab = "👤 Anagrafica"
                             st.rerun()
@@ -1062,5 +936,5 @@ elif st.session_state.active_tab == "📅 Agenda":
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.8 Corretta")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.9")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
