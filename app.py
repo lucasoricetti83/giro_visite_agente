@@ -263,6 +263,8 @@ if 'esclusi_oggi' not in st.session_state:
     st.session_state.esclusi_oggi = []
 if 'show_quick_report' not in st.session_state: 
     st.session_state.show_quick_report = False
+if 'visitati_oggi' not in st.session_state:
+    st.session_state.visitati_oggi = []  # Lista dei clienti visitati oggi
 
 # Stato GPS
 if 'new_coords' not in st.session_state:
@@ -406,14 +408,24 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
         
         tappe_oggi = agenda[2][idx_g]
         
-        if tappe_oggi:
-            num_appuntamenti = sum(1 for t in tappe_oggi if t.get('tipo_tappa') == "📌 APPUNTAMENTO")
-            num_giro = len(tappe_oggi) - num_appuntamenti
+        # Trova clienti visitati oggi che NON sono nel giro pianificato
+        nomi_nel_giro = [t['nome cliente'] for t in tappe_oggi] if tappe_oggi else []
+        visitati_fuori_giro = [v for v in st.session_state.visitati_oggi if v not in nomi_nel_giro]
+        
+        # Conta totali
+        totale_tappe = len(tappe_oggi) if tappe_oggi else 0
+        totale_visitati_oggi = len(st.session_state.visitati_oggi)
+        totale_da_visitare = totale_tappe - len([t for t in tappe_oggi if t['nome cliente'] in st.session_state.visitati_oggi]) if tappe_oggi else 0
+        
+        if tappe_oggi or visitati_fuori_giro:
+            num_appuntamenti = sum(1 for t in tappe_oggi if t.get('tipo_tappa') == "📌 APPUNTAMENTO") if tappe_oggi else 0
+            num_giro = (len(tappe_oggi) - num_appuntamenti) if tappe_oggi else 0
             
-            col_stat1, col_stat2, col_stat3 = st.columns(3)
-            col_stat1.metric("📊 Visite Totali", len(tappe_oggi))
-            col_stat2.metric("📌 Appuntamenti", num_appuntamenti)
-            col_stat3.metric("🚗 Visite Giro", num_giro)
+            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+            col_stat1.metric("📊 Visite Pianificate", totale_tappe)
+            col_stat2.metric("✅ Visitati Oggi", totale_visitati_oggi)
+            col_stat3.metric("⏳ Da Visitare", totale_da_visitare)
+            col_stat4.metric("➕ Fuori Giro", len(visitati_fuori_giro))
             
             st.divider()
             st.subheader("🗺️ Percorso di Oggi")
@@ -428,31 +440,60 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             
             route_coords = [(st.session_state.start_lat, st.session_state.start_lon)]
             
-            for i, tappa in enumerate(tappe_oggi, 1):
-                color = "red" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "green"
-                icon_symbol = "star" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "user"
-                
-                popup_html = f"""
-                <b>{i}. {tappa['nome cliente']}</b><br>
-                ⏰ {tappa['ora_arrivo']}<br>
-                {tappa.get('tipo_tappa', '')}<br>
-                📍 {tappa.get('indirizzo', 'N/A')}
-                """
-                
-                folium.Marker(
-                    location=[tappa['latitude'], tappa['longitude']],
-                    popup=folium.Popup(popup_html, max_width=300),
-                    icon=folium.Icon(color=color, icon=icon_symbol)
-                ).add_to(m)
-                
-                route_coords.append((tappa['latitude'], tappa['longitude']))
-                
-                folium.Marker(
-                    location=[tappa['latitude'], tappa['longitude']],
-                    icon=folium.DivIcon(
-                        html=f'<div style="font-size: 12px; font-weight: bold; color: white; background: {"#c0392b" if color == "red" else "#27ae60"}; border-radius: 50%; width: 24px; height: 24px; text-align: center; line-height: 24px;">{i}</div>'
-                    )
-                ).add_to(m)
+            # Aggiungi marker per tappe pianificate
+            if tappe_oggi:
+                for i, tappa in enumerate(tappe_oggi, 1):
+                    is_visitato = tappa['nome cliente'] in st.session_state.visitati_oggi
+                    
+                    if is_visitato:
+                        color = "green"
+                        icon_symbol = "ok"
+                    elif tappa.get('tipo_tappa') == "📌 APPUNTAMENTO":
+                        color = "red"
+                        icon_symbol = "star"
+                    else:
+                        color = "orange"
+                        icon_symbol = "user"
+                    
+                    stato = "✅ VISITATO" if is_visitato else "⏳ Da visitare"
+                    popup_html = f"""
+                    <b>{i}. {tappa['nome cliente']}</b><br>
+                    {stato}<br>
+                    ⏰ {tappa['ora_arrivo']}<br>
+                    {tappa.get('tipo_tappa', '')}<br>
+                    📍 {tappa.get('indirizzo', 'N/A')}
+                    """
+                    
+                    folium.Marker(
+                        location=[tappa['latitude'], tappa['longitude']],
+                        popup=folium.Popup(popup_html, max_width=300),
+                        icon=folium.Icon(color=color, icon=icon_symbol)
+                    ).add_to(m)
+                    
+                    route_coords.append((tappa['latitude'], tappa['longitude']))
+                    
+                    folium.Marker(
+                        location=[tappa['latitude'], tappa['longitude']],
+                        icon=folium.DivIcon(
+                            html=f'<div style="font-size: 12px; font-weight: bold; color: white; background: {"#27ae60" if is_visitato else "#e67e22"}; border-radius: 50%; width: 24px; height: 24px; text-align: center; line-height: 24px;">{i}</div>'
+                        )
+                    ).add_to(m)
+            
+            # Aggiungi marker per visitati fuori giro
+            for cliente_nome in visitati_fuori_giro:
+                cliente_data = st.session_state.df_master[st.session_state.df_master['nome cliente'] == cliente_nome]
+                if not cliente_data.empty:
+                    row = cliente_data.iloc[0]
+                    popup_html = f"""
+                    <b>➕ {cliente_nome}</b><br>
+                    ✅ VISITATO (Fuori Giro)<br>
+                    📍 {row.get('indirizzo', 'N/A')}
+                    """
+                    folium.Marker(
+                        location=[row['latitude'], row['longitude']],
+                        popup=folium.Popup(popup_html, max_width=300),
+                        icon=folium.Icon(color="green", icon="ok")
+                    ).add_to(m)
             
             if len(route_coords) > 1:
                 folium.PolyLine(route_coords, weight=3, color='#3498db', opacity=0.8).add_to(m)
@@ -465,58 +506,136 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             st.divider()
             st.subheader("📋 Dettaglio Tappe")
             
-            for i, tappa in enumerate(tappe_oggi, 1):
-                with st.container(border=True):
-                    col1, col2, col3 = st.columns([3, 2, 1])
+            # Prima mostra le tappe pianificate
+            if tappe_oggi:
+                for i, tappa in enumerate(tappe_oggi, 1):
+                    is_visitato = tappa['nome cliente'] in st.session_state.visitati_oggi
                     
-                    with col1:
-                        tipo_icon = "📌" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
-                        st.markdown(f"### {i}. {tipo_icon} {tappa['nome cliente']}")
-                        st.caption(f"⏰ Arrivo previsto: **{tappa['ora_arrivo']}**")
-                        if tappa.get('indirizzo'):
-                            st.caption(f"📍 {tappa['indirizzo']}")
-                    
-                    with col2:
-                        nav_url = f"https://www.google.com/maps/dir/?api=1&destination={tappa['latitude']},{tappa['longitude']}"
-                        st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
+                    with st.container(border=True):
+                        col1, col2, col3 = st.columns([3, 2, 1])
                         
-                        if tappa.get('cellulare'):
-                            st.link_button(f"📱 {tappa['cellulare']}", f"tel:{tappa['cellulare']}", use_container_width=True)
-                    
-                    with col3:
-                        if st.button("❌", key=f"escludi_v9_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
-                            st.session_state.esclusi_oggi.append(tappa['nome cliente'])
-                            calcola_piano_cached.clear()
-                            st.rerun()
+                        with col1:
+                            if is_visitato:
+                                st.markdown(f"### ✅ {i}. {tappa['nome cliente']}")
+                                st.success("**VISITATO**")
+                            else:
+                                tipo_icon = "📌" if tappa.get('tipo_tappa') == "📌 APPUNTAMENTO" else "🚗"
+                                st.markdown(f"### {tipo_icon} {i}. {tappa['nome cliente']}")
+                                st.caption(f"⏰ Arrivo previsto: **{tappa['ora_arrivo']}**")
+                            
+                            if tappa.get('indirizzo'):
+                                st.caption(f"📍 {tappa['indirizzo']}")
                         
-                        if st.button("👤", key=f"scheda_v9_{tappa['nome cliente']}", help="Apri scheda cliente"):
-                            st.session_state.cliente_selezionato = tappa['nome cliente']
-                            st.session_state.active_tab = "👤 Anagrafica"
-                            st.rerun()
+                        with col2:
+                            nav_url = f"https://www.google.com/maps/dir/?api=1&destination={tappa['latitude']},{tappa['longitude']}"
+                            st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
+                            
+                            if tappa.get('cellulare'):
+                                st.link_button(f"📱 {tappa['cellulare']}", f"tel:{tappa['cellulare']}", use_container_width=True)
+                        
+                        with col3:
+                            if not is_visitato:
+                                if st.button("❌", key=f"escludi_v9_{tappa['nome cliente']}", help="Escludi dal giro di oggi"):
+                                    st.session_state.esclusi_oggi.append(tappa['nome cliente'])
+                                    calcola_piano_cached.clear()
+                                    st.rerun()
+                            
+                            if st.button("👤", key=f"scheda_v9_{tappa['nome cliente']}", help="Apri scheda cliente"):
+                                st.session_state.cliente_selezionato = tappa['nome cliente']
+                                st.session_state.active_tab = "👤 Anagrafica"
+                                st.rerun()
+            
+            # Poi mostra i visitati fuori giro
+            if visitati_fuori_giro:
+                st.divider()
+                st.subheader("➕ Visitati Fuori Giro")
+                
+                for cliente_nome in visitati_fuori_giro:
+                    cliente_data = st.session_state.df_master[st.session_state.df_master['nome cliente'] == cliente_nome]
+                    if not cliente_data.empty:
+                        row = cliente_data.iloc[0]
+                        
+                        with st.container(border=True):
+                            col1, col2, col3 = st.columns([3, 2, 1])
+                            
+                            with col1:
+                                st.markdown(f"### ✅ ➕ {cliente_nome}")
+                                st.success("**VISITATO (Fuori Giro)**")
+                                if row.get('indirizzo'):
+                                    st.caption(f"📍 {row['indirizzo']}")
+                            
+                            with col2:
+                                nav_url = f"https://www.google.com/maps/dir/?api=1&destination={row['latitude']},{row['longitude']}"
+                                st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
+                                
+                                if row.get('cellulare'):
+                                    st.link_button(f"📱 {row['cellulare']}", f"tel:{row['cellulare']}", use_container_width=True)
+                            
+                            with col3:
+                                if st.button("👤", key=f"scheda_fuori_v9_{cliente_nome}", help="Apri scheda cliente"):
+                                    st.session_state.cliente_selezionato = cliente_nome
+                                    st.session_state.active_tab = "👤 Anagrafica"
+                                    st.rerun()
             
             st.divider()
             st.subheader("🧭 Navigazione Completa")
             
             if tappe_oggi:
-                waypoints = "|".join([f"{t['latitude']},{t['longitude']}" for t in tappe_oggi[:-1]]) if len(tappe_oggi) > 1 else ""
-                destination = f"{tappe_oggi[-1]['latitude']},{tappe_oggi[-1]['longitude']}"
-                origin = f"{st.session_state.start_lat},{st.session_state.start_lon}"
+                # Filtra solo le tappe non ancora visitate per la navigazione
+                tappe_da_visitare = [t for t in tappe_oggi if t['nome cliente'] not in st.session_state.visitati_oggi]
                 
-                if waypoints:
-                    nav_completa_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&waypoints={waypoints}&travelmode=driving"
+                if tappe_da_visitare:
+                    waypoints = "|".join([f"{t['latitude']},{t['longitude']}" for t in tappe_da_visitare[:-1]]) if len(tappe_da_visitare) > 1 else ""
+                    destination = f"{tappe_da_visitare[-1]['latitude']},{tappe_da_visitare[-1]['longitude']}"
+                    origin = f"{st.session_state.start_lat},{st.session_state.start_lon}"
+                    
+                    if waypoints:
+                        nav_completa_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&waypoints={waypoints}&travelmode=driving"
+                    else:
+                        nav_completa_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode=driving"
+                    
+                    st.link_button(f"🗺️ NAVIGA VERSO {len(tappe_da_visitare)} CLIENTI RIMANENTI", nav_completa_url, use_container_width=True, type="primary")
                 else:
-                    nav_completa_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode=driving"
-                
-                st.link_button("🗺️ AVVIA NAVIGAZIONE COMPLETA (Google Maps)", nav_completa_url, use_container_width=True, type="primary")
+                    st.success("🎉 **Complimenti! Hai completato tutte le visite pianificate per oggi!**")
         
         else:
             st.info("📭 Nessuna visita pianificata per oggi.")
-            st.markdown("""
-            **Possibili motivi:**
-            - Tutti i clienti sono stati visitati di recente
-            - Nessun cliente ha raggiunto la frequenza di visita
-            - Hai escluso tutti i clienti dal giro
-            """)
+            
+            # Mostra comunque i clienti visitati fuori giro
+            if st.session_state.visitati_oggi:
+                st.divider()
+                st.subheader(f"✅ Clienti Visitati Oggi ({len(st.session_state.visitati_oggi)})")
+                
+                for cliente_nome in st.session_state.visitati_oggi:
+                    cliente_data = st.session_state.df_master[st.session_state.df_master['nome cliente'] == cliente_nome]
+                    if not cliente_data.empty:
+                        row = cliente_data.iloc[0]
+                        
+                        with st.container(border=True):
+                            col1, col2, col3 = st.columns([3, 2, 1])
+                            
+                            with col1:
+                                st.markdown(f"### ✅ {cliente_nome}")
+                                st.success("**VISITATO**")
+                                if row.get('indirizzo'):
+                                    st.caption(f"📍 {row['indirizzo']}")
+                            
+                            with col2:
+                                nav_url = f"https://www.google.com/maps/dir/?api=1&destination={row['latitude']},{row['longitude']}"
+                                st.link_button("🚗 NAVIGA", nav_url, use_container_width=True)
+                            
+                            with col3:
+                                if st.button("👤", key=f"scheda_visitato_v9_{cliente_nome}", help="Apri scheda cliente"):
+                                    st.session_state.cliente_selezionato = cliente_nome
+                                    st.session_state.active_tab = "👤 Anagrafica"
+                                    st.rerun()
+            else:
+                st.markdown("""
+                **Possibili motivi:**
+                - Tutti i clienti sono stati visitati di recente
+                - Nessun cliente ha raggiunto la frequenza di visita
+                - Hai escluso tutti i clienti dal giro
+                """)
             
             if st.session_state.esclusi_oggi:
                 if st.button("♻️ Ripristina tutti i clienti esclusi", use_container_width=True):
@@ -607,6 +726,12 @@ elif st.session_state.active_tab == "👤 Anagrafica":
                     vecchio = str(st.session_state.df_master.at[idx, 'storico report'])
                     st.session_state.df_master.at[idx, 'storico report'] = nuovo + "\n\n" + vecchio if vecchio != "nan" and vecchio.strip() != "" else nuovo
                     st.session_state.df_master.at[idx, 'ultima visita'] = pd.to_datetime(dv)
+                    
+                    # Aggiungi ai visitati oggi se la data è oggi
+                    if dv == ora_italiana.date():
+                        if scelto not in st.session_state.visitati_oggi:
+                            st.session_state.visitati_oggi.append(scelto)
+                    
                     if save_to_gsheets(st.session_state.df_master):
                         st.session_state.show_quick_report = False
                         st.success("✅ Salvato!")
@@ -936,5 +1061,5 @@ elif st.session_state.active_tab == "📅 Agenda":
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 2.9")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.0")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
