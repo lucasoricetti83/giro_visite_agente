@@ -266,6 +266,28 @@ if 'show_quick_report' not in st.session_state:
 if 'visitati_oggi' not in st.session_state:
     st.session_state.visitati_oggi = []  # Lista dei clienti visitati oggi
 
+# Carica i clienti visitati oggi dal database (ultima visita = oggi)
+def get_visitati_oggi_da_db():
+    """Recupera i clienti che hanno ultima visita = oggi dal database"""
+    oggi_str = ora_italiana.strftime('%d/%m/%Y')
+    visitati = []
+    for _, row in st.session_state.df_master.iterrows():
+        if pd.notnull(row['ultima visita']):
+            try:
+                data_visita = row['ultima visita']
+                if hasattr(data_visita, 'strftime'):
+                    if data_visita.strftime('%d/%m/%Y') == oggi_str:
+                        visitati.append(row['nome cliente'])
+            except:
+                pass
+    return visitati
+
+# Sincronizza visitati_oggi con il database
+visitati_da_db = get_visitati_oggi_da_db()
+for cliente in visitati_da_db:
+    if cliente not in st.session_state.visitati_oggi:
+        st.session_state.visitati_oggi.append(cliente)
+
 # Stato GPS
 if 'new_coords' not in st.session_state:
     st.session_state.new_coords = None
@@ -1061,5 +1083,5 @@ elif st.session_state.active_tab == "📅 Agenda":
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.0")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.1")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
