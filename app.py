@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, time
 from math import radians, cos, sin, asin, sqrt
 from geopy.geocoders import Nominatim
 import io
+import re
 import time as time_module  # Importa time con alias per evitare conflitti
 from streamlit_gsheets import GSheetsConnection
 
@@ -71,6 +72,84 @@ def haversine(lat1, lon1, lat2, lon2):
     dlat, dlon = lat2 - lat1, lon2 - lon1
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     return 2 * 6371 * asin(sqrt(a))
+
+def calcola_km_tempo_giro(tappe, start_lat, start_lon, durata_visita_min=45, velocita_media_kmh=50):
+    """Calcola km totali e tempo stimato per un giro di visite"""
+    if not tappe:
+        return 0, 0, 0
+    
+    km_totale = 0
+    pos_corrente = (start_lat, start_lon)
+    
+    # Calcola distanza dal punto di partenza alla prima tappa
+    for tappa in tappe:
+        dist = haversine(pos_corrente[0], pos_corrente[1], tappa['latitude'], tappa['longitude'])
+        km_totale += dist
+        pos_corrente = (tappa['latitude'], tappa['longitude'])
+    
+    # Aggiungi ritorno al punto di partenza
+    km_ritorno = haversine(pos_corrente[0], pos_corrente[1], start_lat, start_lon)
+    km_totale += km_ritorno
+    
+    # Calcola tempi
+    tempo_guida_min = (km_totale / velocita_media_kmh) * 60
+    tempo_visite_min = len(tappe) * durata_visita_min
+    tempo_totale_min = tempo_guida_min + tempo_visite_min
+    
+    return round(km_totale, 1), round(tempo_guida_min), round(tempo_totale_min)
+
+def get_clienti_trascurati(df, soglia_warning_giorni=7, soglia_critico_giorni=14):
+    """Trova clienti che hanno superato la frequenza di visita"""
+    oggi = ora_italiana.date()
+    clienti_alert = []
+    
+    for _, row in df.iterrows():
+        if row['visitare'] != 'SI':
+            continue
+            
+        if pd.isnull(row['ultima visita']) or row['ultima visita'] <= pd.Timestamp('2000-01-01'):
+            # Mai visitato
+            clienti_alert.append({
+                'nome': row['nome cliente'],
+                'indirizzo': row.get('indirizzo', ''),
+                'giorni_ritardo': 999,
+                'livello': 'critico',
+                'messaggio': 'Mai visitato'
+            })
+        else:
+            frequenza = int(row['frequenza (giorni)'])
+            ultima = row['ultima visita'].date()
+            prossima = ultima + timedelta(days=frequenza)
+            giorni_ritardo = (oggi - prossima).days
+            
+            if giorni_ritardo > soglia_critico_giorni:
+                clienti_alert.append({
+                    'nome': row['nome cliente'],
+                    'indirizzo': row.get('indirizzo', ''),
+                    'giorni_ritardo': giorni_ritardo,
+                    'livello': 'critico',
+                    'messaggio': f'Scaduto da {giorni_ritardo} giorni'
+                })
+            elif giorni_ritardo > soglia_warning_giorni:
+                clienti_alert.append({
+                    'nome': row['nome cliente'],
+                    'indirizzo': row.get('indirizzo', ''),
+                    'giorni_ritardo': giorni_ritardo,
+                    'livello': 'warning',
+                    'messaggio': f'Scaduto da {giorni_ritardo} giorni'
+                })
+            elif giorni_ritardo >= 0:
+                clienti_alert.append({
+                    'nome': row['nome cliente'],
+                    'indirizzo': row.get('indirizzo', ''),
+                    'giorni_ritardo': giorni_ritardo,
+                    'livello': 'scaduto',
+                    'messaggio': f'Scaduto da {giorni_ritardo} giorni' if giorni_ritardo > 0 else 'Scade oggi'
+                })
+    
+    # Ordina per giorni di ritardo (più urgenti prima)
+    clienti_alert.sort(key=lambda x: x['giorni_ritardo'], reverse=True)
+    return clienti_alert
 
 def get_coords(address):
     """Geocoding: da indirizzo a coordinate"""
@@ -405,8 +484,8 @@ def calcola_piano():
     )
 
 # --- 5. INTERFACCIA ---
-nav = st.columns(6)
-menu = ["🚀 Giro Oggi", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
+nav = st.columns(7)
+menu = ["🚀 Giro Oggi", "📊 Dashboard", "📅 Agenda", "🗺️ Mappa Clienti", "👤 Anagrafica", "➕ Nuovo Cliente", "⚙️ Parametri"]
 for i, m in enumerate(menu):
     if nav[i].button(m, key=f"nav_{m}", use_container_width=True, type="primary" if st.session_state.active_tab == m else "secondary"):
         st.session_state.active_tab = m
@@ -429,6 +508,14 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
     giorni_nomi_full = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
     
     if idx_g in st.session_state.giorni_lavorativi:
+        # Alert clienti critici
+        clienti_critici = [c for c in get_clienti_trascurati(st.session_state.df_master) if c['livello'] == 'critico']
+        if clienti_critici:
+            st.error(f"🚨 **{len(clienti_critici)} clienti critici** non visitati da oltre 14 giorni! [Vai alla Dashboard →]()")
+            if st.button("📊 Vai alla Dashboard", key="goto_dashboard_alert"):
+                st.session_state.active_tab = "📊 Dashboard"
+                st.rerun()
+        
         if st.session_state.esclusi_oggi:
             with st.expander(f"🚫 Clienti esclusi oggi ({len(st.session_state.esclusi_oggi)})", expanded=False):
                 for cliente_escluso in st.session_state.esclusi_oggi:
@@ -454,11 +541,32 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
             num_appuntamenti = sum(1 for t in tappe_oggi if t.get('tipo_tappa') == "📌 APPUNTAMENTO") if tappe_oggi else 0
             num_giro = (len(tappe_oggi) - num_appuntamenti) if tappe_oggi else 0
             
+            # Calcola km e tempo stimato
+            km_totale, tempo_guida, tempo_totale = calcola_km_tempo_giro(
+                tappe_oggi if tappe_oggi else [],
+                st.session_state.start_lat,
+                st.session_state.start_lon,
+                st.session_state.durata_v
+            )
+            
+            # Prima riga: statistiche visite
             col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
             col_stat1.metric("📊 Visite Pianificate", totale_tappe)
             col_stat2.metric("✅ Visitati Oggi", totale_visitati_oggi)
             col_stat3.metric("⏳ Da Visitare", totale_da_visitare)
             col_stat4.metric("➕ Fuori Giro", len(visitati_fuori_giro))
+            
+            # Seconda riga: km e tempo
+            col_km1, col_km2, col_km3, col_km4 = st.columns(4)
+            col_km1.metric("🛣️ Km Totali", f"{km_totale} km")
+            col_km2.metric("🚗 Tempo Guida", f"{tempo_guida // 60}h {tempo_guida % 60}m")
+            col_km3.metric("⏱️ Tempo Totale", f"{tempo_totale // 60}h {tempo_totale % 60}m")
+            
+            # Stima orario fine
+            if tempo_totale > 0:
+                ora_inizio = datetime.combine(ora_italiana.date(), st.session_state.h_inizio)
+                ora_fine_stimata = ora_inizio + timedelta(minutes=tempo_totale)
+                col_km4.metric("🏁 Fine Stimata", ora_fine_stimata.strftime("%H:%M"))
             
             st.divider()
             st.subheader("🗺️ Percorso di Oggi")
@@ -719,6 +827,191 @@ if st.session_state.active_tab == "🚀 Giro Oggi":
                                 st.session_state.cliente_selezionato = cliente_nome
                                 st.session_state.active_tab = "👤 Anagrafica"
                                 st.rerun()
+
+# --- TAB: DASHBOARD ---
+elif st.session_state.active_tab == "📊 Dashboard":
+    st.header("📊 Dashboard Statistiche")
+    
+    # --- ALERT CLIENTI TRASCURATI ---
+    st.subheader("🚨 Alert Clienti Trascurati")
+    
+    clienti_alert = get_clienti_trascurati(st.session_state.df_master)
+    
+    critici = [c for c in clienti_alert if c['livello'] == 'critico']
+    warning = [c for c in clienti_alert if c['livello'] == 'warning']
+    scaduti = [c for c in clienti_alert if c['livello'] == 'scaduto']
+    
+    col_alert1, col_alert2, col_alert3 = st.columns(3)
+    col_alert1.metric("🔴 Critici (>14gg)", len(critici))
+    col_alert2.metric("🟠 Warning (>7gg)", len(warning))
+    col_alert3.metric("🟡 Scaduti", len(scaduti))
+    
+    if critici:
+        with st.expander(f"🔴 Clienti CRITICI - {len(critici)} clienti", expanded=True):
+            for cliente in critici[:10]:  # Mostra max 10
+                col1, col2, col3 = st.columns([3, 2, 1])
+                col1.error(f"**{cliente['nome']}**")
+                col2.write(cliente['messaggio'])
+                if col3.button("👤", key=f"alert_crit_{cliente['nome']}", help="Apri scheda"):
+                    st.session_state.cliente_selezionato = cliente['nome']
+                    st.session_state.active_tab = "👤 Anagrafica"
+                    st.rerun()
+    
+    if warning:
+        with st.expander(f"🟠 Clienti WARNING - {len(warning)} clienti", expanded=False):
+            for cliente in warning[:10]:
+                col1, col2, col3 = st.columns([3, 2, 1])
+                col1.warning(f"**{cliente['nome']}**")
+                col2.write(cliente['messaggio'])
+                if col3.button("👤", key=f"alert_warn_{cliente['nome']}", help="Apri scheda"):
+                    st.session_state.cliente_selezionato = cliente['nome']
+                    st.session_state.active_tab = "👤 Anagrafica"
+                    st.rerun()
+    
+    if scaduti:
+        with st.expander(f"🟡 Clienti SCADUTI - {len(scaduti)} clienti", expanded=False):
+            for cliente in scaduti[:10]:
+                col1, col2, col3 = st.columns([3, 2, 1])
+                col1.info(f"**{cliente['nome']}**")
+                col2.write(cliente['messaggio'])
+                if col3.button("👤", key=f"alert_scad_{cliente['nome']}", help="Apri scheda"):
+                    st.session_state.cliente_selezionato = cliente['nome']
+                    st.session_state.active_tab = "👤 Anagrafica"
+                    st.rerun()
+    
+    if not clienti_alert:
+        st.success("✅ Nessun cliente trascurato! Ottimo lavoro!")
+    
+    st.divider()
+    
+    # --- STATISTICHE GENERALI ---
+    st.subheader("📈 Statistiche Generali")
+    
+    df = st.session_state.df_master
+    oggi = ora_italiana.date()
+    inizio_mese = oggi.replace(day=1)
+    inizio_mese_scorso = (inizio_mese - timedelta(days=1)).replace(day=1)
+    fine_mese_scorso = inizio_mese - timedelta(days=1)
+    
+    # Conta visite questo mese e mese scorso
+    visite_questo_mese = 0
+    visite_mese_scorso = 0
+    
+    for _, row in df.iterrows():
+        if pd.notnull(row['ultima visita']) and row['ultima visita'] > pd.Timestamp('2000-01-01'):
+            data_visita = row['ultima visita'].date()
+            if data_visita >= inizio_mese:
+                visite_questo_mese += 1
+            elif inizio_mese_scorso <= data_visita <= fine_mese_scorso:
+                visite_mese_scorso += 1
+    
+    # Clienti attivi vs totali
+    clienti_totali = len(df)
+    clienti_attivi = len(df[df['visitare'] == 'SI'])
+    clienti_mai_visitati = len(df[df['ultima visita'] <= pd.Timestamp('2000-01-01')])
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    delta_visite = visite_questo_mese - visite_mese_scorso if visite_mese_scorso > 0 else None
+    col1.metric("📅 Visite Questo Mese", visite_questo_mese, delta=delta_visite)
+    col2.metric("📆 Visite Mese Scorso", visite_mese_scorso)
+    col3.metric("👥 Clienti Attivi", f"{clienti_attivi}/{clienti_totali}")
+    col4.metric("🆕 Mai Visitati", clienti_mai_visitati)
+    
+    st.divider()
+    
+    # --- STATISTICHE VISITE PER PERIODO ---
+    st.subheader("📊 Andamento Visite")
+    
+    # Conta visite per settimana (ultime 4 settimane)
+    visite_per_settimana = []
+    for i in range(4):
+        inizio_sett = oggi - timedelta(days=oggi.weekday() + 7*i)
+        fine_sett = inizio_sett + timedelta(days=6)
+        
+        count = 0
+        for _, row in df.iterrows():
+            if pd.notnull(row['ultima visita']) and row['ultima visita'] > pd.Timestamp('2000-01-01'):
+                data_visita = row['ultima visita'].date()
+                if inizio_sett <= data_visita <= fine_sett:
+                    count += 1
+        
+        visite_per_settimana.append({
+            'Settimana': f"Sett. {inizio_sett.strftime('%d/%m')}",
+            'Visite': count
+        })
+    
+    visite_per_settimana.reverse()
+    
+    # Mostra come barre di progresso
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        st.write("**📈 Visite per Settimana**")
+        max_visite = max([v['Visite'] for v in visite_per_settimana]) if visite_per_settimana else 1
+        for sett in visite_per_settimana:
+            progress = sett['Visite'] / max_visite if max_visite > 0 else 0
+            st.write(f"{sett['Settimana']}: **{sett['Visite']}** visite")
+            st.progress(progress)
+    
+    with col_chart2:
+        st.write("**🏆 Top 5 Clienti Più Visitati**")
+        
+        # Conta visite totali per cliente (basato sullo storico report)
+        clienti_visite = []
+        for _, row in df.iterrows():
+            storico = str(row.get('storico report', ''))
+            # Conta quante date ci sono nello storico (formato [dd/mm/yyyy])
+            visite_count = len(re.findall(r'\[\d{2}/\d{2}/\d{4}\]', storico))
+            if visite_count > 0:
+                clienti_visite.append({
+                    'nome': row['nome cliente'],
+                    'visite': visite_count
+                })
+        
+        clienti_visite.sort(key=lambda x: x['visite'], reverse=True)
+        
+        for i, cliente in enumerate(clienti_visite[:5], 1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            st.write(f"{medal} **{cliente['nome']}** - {cliente['visite']} visite")
+    
+    st.divider()
+    
+    # --- COPERTURA TERRITORIALE ---
+    st.subheader("🗺️ Copertura Territoriale")
+    
+    # Conta clienti per provincia
+    province = df['provincia'].value_counts().head(10)
+    
+    col_prov1, col_prov2 = st.columns(2)
+    
+    with col_prov1:
+        st.write("**📍 Clienti per Provincia**")
+        for prov, count in province.items():
+            if prov and str(prov).strip():
+                st.write(f"**{prov}**: {count} clienti")
+    
+    with col_prov2:
+        # Percentuale clienti visitati negli ultimi 30 giorni
+        trenta_giorni_fa = oggi - timedelta(days=30)
+        visitati_30gg = 0
+        for _, row in df.iterrows():
+            if pd.notnull(row['ultima visita']) and row['ultima visita'] > pd.Timestamp('2000-01-01'):
+                if row['ultima visita'].date() >= trenta_giorni_fa:
+                    visitati_30gg += 1
+        
+        percentuale_30gg = (visitati_30gg / clienti_attivi * 100) if clienti_attivi > 0 else 0
+        
+        st.write("**📊 Copertura Ultimi 30 Giorni**")
+        st.metric("Clienti Visitati", f"{visitati_30gg}/{clienti_attivi}", f"{percentuale_30gg:.1f}%")
+        st.progress(percentuale_30gg / 100)
+        
+        if percentuale_30gg >= 80:
+            st.success("🌟 Ottima copertura!")
+        elif percentuale_30gg >= 50:
+            st.warning("📈 Buona copertura, puoi migliorare!")
+        else:
+            st.error("⚠️ Copertura bassa, aumenta le visite!")
 
 # --- TAB: MAPPA ---
 elif st.session_state.active_tab == "🗺️ Mappa Clienti":
@@ -1164,5 +1457,5 @@ elif st.session_state.active_tab == "📅 Agenda":
 # --- FOOTER ---
 st.divider()
 footer_cols = st.columns([2, 1])
-footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.2")
+footer_cols[0].caption("🚀 **Giro Visite CRM Pro** - Versione 3.3")
 footer_cols[1].caption(f"🕐 {ora_italiana.strftime('%H:%M:%S')}")
